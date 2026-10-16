@@ -1,0 +1,31 @@
+services:
+  postgres:
+    # Multi-arch build of the PostGIS image (the official one is amd64 only).
+    image: imresamu/postgis:17-3.5
+    environment:
+      POSTGRES_USER: quickbytes
+      POSTGRES_PASSWORD: quickbytes
+      POSTGRES_DB: quickbytes
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickbytes -d quickbytes"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://quickbytes:quickbytes@postgres:5432/quickbytes?sslmode=disable
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

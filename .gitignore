@@ -1,0 +1,32 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Go
+/bin/
+*.test
+*.out
+coverage.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Map data (large, downloaded by a script)
+/data/osm/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Private design doc and study notes (kept local, not published)
+docs/DESIGN.md
+docs/NOTES.md
