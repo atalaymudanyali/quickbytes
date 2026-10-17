@@ -19,6 +19,8 @@ type signupRequest struct {
 type accountResponse struct {
 	User     users.User      `json:"user"`
 	Profiles []users.Profile `json:"profiles"`
+	// Tokens is set by sign-up and login, and left out by GET /me.
+	Tokens *tokenPair `json:"tokens,omitempty"`
 }
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +49,13 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		s.writeInternalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, accountResponse{User: user, Profiles: []users.Profile{profile}})
+	profiles := []users.Profile{profile}
+	tokens, err := s.startSession(r.Context(), user.ID, profiles)
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, accountResponse{User: user, Profiles: profiles, Tokens: tokens})
 }
 
 func validateSignup(req signupRequest) map[string]string {
@@ -115,7 +123,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeInternalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, accountResponse{User: user, Profiles: profiles})
+	tokens, err := s.startSession(r.Context(), user.ID, profiles)
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, accountResponse{User: user, Profiles: profiles, Tokens: tokens})
 }
 
 // writeInvalidCredentials gives the same answer for an unknown email and a wrong

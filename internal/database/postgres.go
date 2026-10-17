@@ -49,7 +49,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 func migrate(ctx context.Context, db *sql.DB) error {
 	// Several API copies may start at once. The session locker takes a Postgres
 	// advisory lock, so only one copy applies migrations and the others wait.
-	locker, err := lock.NewPostgresSessionLocker()
+	// Retry every second, for up to 5 minutes (the default retries every 5s).
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 300))
 	if err != nil {
 		return fmt.Errorf("create migration lock: %w", err)
 	}

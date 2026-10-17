@@ -15,7 +15,12 @@ const requestIDHeader = "X-Request-ID"
 
 type ctxKey int
 
-const requestIDKey ctxKey = iota
+// Keys for values stored in a request's context. A private type means no other
+// package can read or overwrite them by accident.
+const (
+	requestIDKey ctxKey = iota
+	claimsKey
+)
 
 // validRequestID limits IDs accepted from clients, so nobody can inject huge values
 // or line breaks into our logs.

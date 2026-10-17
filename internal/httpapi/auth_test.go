@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
@@ -15,11 +16,17 @@ import (
 func newAuthTestHandler(t *testing.T) http.Handler {
 	t.Helper()
 	pool := testutil.DB(t)
+	tokens, err := auth.NewTokenIssuer([]byte(strings.Repeat("k", 32)), 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return NewServer(Deps{
-		DB:     pool,
-		Users:  users.NewStore(pool),
-		Hasher: auth.NewHasher(auth.FastParams),
-		Logger: discardLogger(),
+		DB:      pool,
+		Users:   users.NewStore(pool),
+		Hasher:  auth.NewHasher(auth.FastParams),
+		Tokens:  tokens,
+		Refresh: auth.NewRefreshStore(pool, time.Hour),
+		Logger:  discardLogger(),
 	}).Routes()
 }
 

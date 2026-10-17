@@ -21,24 +21,35 @@ type Pinger interface {
 // Deps are the things the HTTP layer needs. Tests that only touch some routes can
 // leave the rest empty.
 type Deps struct {
-	DB     Pinger
-	Users  *users.Store
-	Hasher *auth.Hasher
-	Logger *slog.Logger
+	DB      Pinger
+	Users   *users.Store
+	Hasher  *auth.Hasher
+	Tokens  *auth.TokenIssuer
+	Refresh *auth.RefreshStore
+	Logger  *slog.Logger
 }
 
 type Server struct {
-	db     Pinger
-	users  *users.Store
-	hasher *auth.Hasher
-	logger *slog.Logger
+	db      Pinger
+	users   *users.Store
+	hasher  *auth.Hasher
+	tokens  *auth.TokenIssuer
+	refresh *auth.RefreshStore
+	logger  *slog.Logger
 
 	dummyOnce sync.Once
 	dummy     string // see dummyHash
 }
 
 func NewServer(d Deps) *Server {
-	return &Server{db: d.DB, users: d.Users, hasher: d.Hasher, logger: d.Logger}
+	return &Server{
+		db:      d.DB,
+		users:   d.Users,
+		hasher:  d.Hasher,
+		tokens:  d.Tokens,
+		refresh: d.Refresh,
+		logger:  d.Logger,
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -47,6 +58,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("POST /auth/signup", s.handleSignup)
 	mux.HandleFunc("POST /auth/login", s.handleLogin)
+	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
+	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	mux.Handle("GET /me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.

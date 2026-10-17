@@ -46,13 +46,20 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewServer(httpapi.Deps{
-			DB:     pool,
-			Users:  users.NewStore(pool),
-			Hasher: auth.NewHasher(auth.DefaultParams),
-			Logger: logger,
+			DB:      pool,
+			Users:   users.NewStore(pool),
+			Hasher:  auth.NewHasher(auth.DefaultParams),
+			Tokens:  tokens,
+			Refresh: auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
+			Logger:  logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

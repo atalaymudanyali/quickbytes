@@ -21,6 +21,8 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://quickbytes:quickbytes@postgres:5432/quickbytes?sslmode=disable
+      # Development-only secret. Real deployments set their own, never committed.
+      JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

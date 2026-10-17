@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,11 +28,18 @@ func DB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect to test database: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if err := database.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate test database: %v", err)
+	// Migrate once per test binary (one per package), not once per test.
+	migrateOnce.Do(func() { migrateErr = database.Migrate(ctx, pool) })
+	if migrateErr != nil {
+		t.Fatalf("migrate test database: %v", migrateErr)
 	}
 	return pool
 }
+
+var (
+	migrateOnce sync.Once
+	migrateErr  error
+)
 
 // UniqueEmail returns an email no other test uses. Test packages run in parallel
 // against the same database, so fixed emails would collide.
