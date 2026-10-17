@@ -18,7 +18,7 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newTestHandler(db Pinger) http.Handler {
-	return NewServer(db, discardLogger()).Routes()
+	return NewServer(Deps{DB: db, Logger: discardLogger()}).Routes()
 }
 
 func do(t *testing.T, h http.Handler, req *http.Request) *httptest.ResponseRecorder {

@@ -5,7 +5,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
 
 // Pinger is anything that can report whether it's reachable. The database pool
@@ -14,19 +18,35 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Server struct {
-	db     Pinger
-	logger *slog.Logger
+// Deps are the things the HTTP layer needs. Tests that only touch some routes can
+// leave the rest empty.
+type Deps struct {
+	DB     Pinger
+	Users  *users.Store
+	Hasher *auth.Hasher
+	Logger *slog.Logger
 }
 
-func NewServer(db Pinger, logger *slog.Logger) *Server {
-	return &Server{db: db, logger: logger}
+type Server struct {
+	db     Pinger
+	users  *users.Store
+	hasher *auth.Hasher
+	logger *slog.Logger
+
+	dummyOnce sync.Once
+	dummy     string // see dummyHash
+}
+
+func NewServer(d Deps) *Server {
+	return &Server{db: d.DB, users: d.Users, hasher: d.Hasher, logger: d.Logger}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("POST /auth/signup", s.handleSignup)
+	mux.HandleFunc("POST /auth/login", s.handleLogin)
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.

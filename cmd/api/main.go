@@ -11,9 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
+	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
 
 func main() {
@@ -45,8 +47,13 @@ func run(logger *slog.Logger) error {
 	}
 
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewServer(pool, logger).Routes(),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.NewServer(httpapi.Deps{
+			DB:     pool,
+			Users:  users.NewStore(pool),
+			Hasher: auth.NewHasher(auth.DefaultParams),
+			Logger: logger,
+		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
