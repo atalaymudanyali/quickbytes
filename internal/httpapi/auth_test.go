@@ -15,19 +15,28 @@ import (
 
 func newAuthTestHandler(t *testing.T) http.Handler {
 	t.Helper()
+	_, h := newAuthTestServer(t)
+	return h
+}
+
+// newAuthTestServer returns the server too, for tests that wrap its middleware
+// around their own handlers.
+func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
+	t.Helper()
 	pool := testutil.DB(t)
 	tokens, err := auth.NewTokenIssuer([]byte(strings.Repeat("k", 32)), 15*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(Deps{
+	srv := NewServer(Deps{
 		DB:      pool,
 		Users:   users.NewStore(pool),
 		Hasher:  auth.NewHasher(auth.FastParams),
 		Tokens:  tokens,
 		Refresh: auth.NewRefreshStore(pool, time.Hour),
 		Logger:  discardLogger(),
-	}).Routes()
+	})
+	return srv, srv.Routes()
 }
 
 func postJSON(t *testing.T, h http.Handler, path, body string) *httptest.ResponseRecorder {

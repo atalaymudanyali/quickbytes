@@ -61,6 +61,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.Handle("GET /me", s.requireAuth(http.HandlerFunc(s.handleMe)))
+	mux.Handle("POST /me/profiles", s.requireAuth(http.HandlerFunc(s.handleAddProfile)))
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.
