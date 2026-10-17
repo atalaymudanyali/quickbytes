@@ -15,7 +15,7 @@ run: db ## Run the API on your machine against the Docker database
 	set -a && . ./.env && set +a && go run ./cmd/api
 
 test: db ## Run all tests, including the ones that need the database
-	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test -race ./...
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test -race -count=1 ./...
 
 lint: ## Check formatting and common mistakes
 	@test -z "$$(gofmt -l .)" || (echo "Not gofmt-formatted:"; gofmt -l .; exit 1)

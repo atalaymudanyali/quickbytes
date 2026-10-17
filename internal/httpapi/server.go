@@ -3,7 +3,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -28,7 +27,14 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	return s.logRequests(mux)
+
+	// Outermost first: every request gets an ID, then is logged, and a panic
+	// anywhere inside still produces a logged 500.
+	var h http.Handler = jsonFallbacks(mux)
+	h = recoverPanics(s.logger, h)
+	h = logRequests(s.logger, h)
+	h = withRequestID(h)
+	return h
 }
 
 // handleHealthz answers "is the process alive?". It never checks dependencies, so a
@@ -43,39 +49,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if err := s.db.Ping(ctx); err != nil {
-		s.logger.Warn("readiness check failed", "err", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		s.logger.Warn("readiness check failed", "request_id", requestIDFrom(r.Context()), "err", err)
+		writeError(w, r, http.StatusServiceUnavailable, "unavailable", "database unreachable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (s *Server) logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		s.logger.Info("request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rec.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
