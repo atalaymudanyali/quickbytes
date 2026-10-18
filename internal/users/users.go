@@ -136,6 +136,23 @@ func (s *Store) AddProfile(ctx context.Context, userID uuid.UUID, role Role) (Pr
 	return p, nil
 }
 
+// ProfileByRole finds the user's profile for a role. Each user has at most one per
+// role, so the pair identifies it.
+func (s *Store) ProfileByRole(ctx context.Context, userID uuid.UUID, role Role) (Profile, error) {
+	var p Profile
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, role, created_at FROM profiles
+		WHERE user_id = $1 AND role = $2`, userID, role,
+	).Scan(&p.ID, &p.UserID, &p.Role, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Profile{}, ErrNotFound
+	}
+	if err != nil {
+		return Profile{}, fmt.Errorf("get profile: %w", err)
+	}
+	return p, nil
+}
+
 func (s *Store) ListProfiles(ctx context.Context, userID uuid.UUID) ([]Profile, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, role, created_at FROM profiles

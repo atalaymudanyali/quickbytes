@@ -15,6 +15,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
+	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
 
@@ -54,12 +55,13 @@ func run(logger *slog.Logger) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewServer(httpapi.Deps{
-			DB:      pool,
-			Users:   users.NewStore(pool),
-			Hasher:  auth.NewHasher(auth.DefaultParams),
-			Tokens:  tokens,
-			Refresh: auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
-			Logger:  logger,
+			DB:          pool,
+			Users:       users.NewStore(pool),
+			Hasher:      auth.NewHasher(auth.DefaultParams),
+			Tokens:      tokens,
+			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
+			Restaurants: restaurants.NewStore(pool),
+			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

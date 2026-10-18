@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
 
@@ -21,21 +22,23 @@ type Pinger interface {
 // Deps are the things the HTTP layer needs. Tests that only touch some routes can
 // leave the rest empty.
 type Deps struct {
-	DB      Pinger
-	Users   *users.Store
-	Hasher  *auth.Hasher
-	Tokens  *auth.TokenIssuer
-	Refresh *auth.RefreshStore
-	Logger  *slog.Logger
+	DB          Pinger
+	Users       *users.Store
+	Hasher      *auth.Hasher
+	Tokens      *auth.TokenIssuer
+	Refresh     *auth.RefreshStore
+	Restaurants *restaurants.Store
+	Logger      *slog.Logger
 }
 
 type Server struct {
-	db      Pinger
-	users   *users.Store
-	hasher  *auth.Hasher
-	tokens  *auth.TokenIssuer
-	refresh *auth.RefreshStore
-	logger  *slog.Logger
+	db          Pinger
+	users       *users.Store
+	hasher      *auth.Hasher
+	tokens      *auth.TokenIssuer
+	refresh     *auth.RefreshStore
+	restaurants *restaurants.Store
+	logger      *slog.Logger
 
 	dummyOnce sync.Once
 	dummy     string // see dummyHash
@@ -43,12 +46,13 @@ type Server struct {
 
 func NewServer(d Deps) *Server {
 	return &Server{
-		db:      d.DB,
-		users:   d.Users,
-		hasher:  d.Hasher,
-		tokens:  d.Tokens,
-		refresh: d.Refresh,
-		logger:  d.Logger,
+		db:          d.DB,
+		users:       d.Users,
+		hasher:      d.Hasher,
+		tokens:      d.Tokens,
+		refresh:     d.Refresh,
+		restaurants: d.Restaurants,
+		logger:      d.Logger,
 	}
 }
 
@@ -62,6 +66,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.Handle("GET /me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 	mux.Handle("POST /me/profiles", s.requireAuth(http.HandlerFunc(s.handleAddProfile)))
+
+	// Restaurants: browsing is public, managing needs a restaurant profile.
+	ownerOnly := func(h http.HandlerFunc) http.Handler {
+		return s.requireAuth(requireRole(users.RoleRestaurant, h))
+	}
+	mux.HandleFunc("GET /restaurants/{id}", s.handleGetRestaurant)
+	mux.Handle("POST /restaurants", ownerOnly(s.handleCreateRestaurant))
+	mux.Handle("PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant))
+	mux.Handle("GET /me/restaurants", ownerOnly(s.handleMyRestaurants))
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.

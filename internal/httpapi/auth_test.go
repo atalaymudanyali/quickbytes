@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -29,12 +30,13 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 		t.Fatal(err)
 	}
 	srv := NewServer(Deps{
-		DB:      pool,
-		Users:   users.NewStore(pool),
-		Hasher:  auth.NewHasher(auth.FastParams),
-		Tokens:  tokens,
-		Refresh: auth.NewRefreshStore(pool, time.Hour),
-		Logger:  discardLogger(),
+		DB:          pool,
+		Users:       users.NewStore(pool),
+		Hasher:      auth.NewHasher(auth.FastParams),
+		Tokens:      tokens,
+		Refresh:     auth.NewRefreshStore(pool, time.Hour),
+		Restaurants: restaurants.NewStore(pool),
+		Logger:      discardLogger(),
 	})
 	return srv, srv.Routes()
 }
