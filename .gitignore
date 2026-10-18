@@ -27,6 +27,12 @@ xcuserdata/
 .vscode/
 .DS_Store
 
-# Private design doc and study notes (kept local, not published)
+# Private, kept local and never published:
+# design doc and study notes
 docs/DESIGN.md
 docs/NOTES.md
+# AI assistant instructions and settings
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+AGENTS.md
