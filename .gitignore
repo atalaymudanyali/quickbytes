@@ -31,6 +31,7 @@ xcuserdata/
 # design doc and study notes
 docs/DESIGN.md
 docs/NOTES.md
+docs/UPGRADES.md
 # AI assistant instructions and settings
 CLAUDE.md
 CLAUDE.local.md

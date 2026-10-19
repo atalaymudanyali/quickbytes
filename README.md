@@ -48,7 +48,30 @@ make down      # stop everything
 | `POST /auth/logout` | Revoke the refresh token and all tokens issued from the same login. |
 | `GET /me` | The signed-in user and their profiles. Needs `Authorization: Bearer <token>`. |
 | `POST /me/profiles` | Add a `restaurant` or `driver` profile. Refresh afterwards to use it. |
+| `GET /restaurants?lat=…&lng=…` | Restaurants whose delivery zone covers that point, closest first. Public, paginated with `next_cursor`. |
+| `GET /restaurants/{id}` | One restaurant. Public. |
+| `POST /restaurants` | Create a restaurant (needs a restaurant profile). |
+| `PATCH /restaurants/{id}` | Change only the fields sent. Owner only; anyone else gets 404. |
+| `GET /me/restaurants` | The signed-in owner's restaurants. |
 
 Errors always look like
 `{"error": {"code": "...", "message": "...", "request_id": "..."}}`, and every
 response carries an `X-Request-ID` header that matches the server's log line.
+
+## Measured
+
+### Near-me search: spatial index
+
+`make bench-near-me` generates 100,000 restaurants across Istanbul and times the
+first page of the near-me query from Kadıköy pier (median of 3 runs, Apple Silicon,
+PostgreSQL 17 + PostGIS 3.5 in Docker):
+
+| Setup | How PostgreSQL searched | Time |
+|---|---|---|
+| No spatial index | Checked all 100,000 rows | 51 ms |
+| GiST index + fixed 10 km filter (what the API does) | Index found 3,682 candidates in the 10 km box; 565 deliver here | **3.6 ms** |
+| GiST index, per-restaurant radius only | Index unusable, checked all 100,000 rows | 50 ms |
+
+The last row is why the query filters twice: the index needs one fixed search
+distance, so a 10 km outer check (the maximum delivery radius) narrows the search
+before each restaurant's own radius is applied.
