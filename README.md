@@ -38,6 +38,18 @@ make test      # run all tests (starts the database if needed)
 make down      # stop everything
 ```
 
+### API documentation
+
+With the API running, open **http://localhost:8080/docs** for interactive docs
+(Swagger UI): every endpoint, its inputs and responses, and "Try it out" to call it
+from the browser. Log in with `POST /auth/login`, then paste the `access_token` into
+**Authorize** to try the protected endpoints. The contract itself is
+[`api/openapi.yaml`](api/openapi.yaml) (also served at `/openapi.yaml`).
+
+The tests keep code and spec in sync: every served route must be in the spec and
+the other way around, and every request and response in the HTTP tests is checked
+against it.
+
 | Endpoint | Does |
 |---|---|
 | `GET /healthz` | Is the process alive? Never checks dependencies. |

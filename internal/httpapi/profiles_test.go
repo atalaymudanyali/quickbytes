@@ -13,6 +13,7 @@ import (
 func addProfile(t *testing.T, h http.Handler, accessToken, role string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/me/profiles", strings.NewReader(`{"role": "`+role+`"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	return do(t, h, req)
 }

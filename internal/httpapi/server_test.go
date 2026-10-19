@@ -17,8 +17,8 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func newTestHandler(db Pinger) http.Handler {
-	return NewServer(Deps{DB: db, Logger: discardLogger()}).Routes()
+func newTestHandler(t *testing.T, db Pinger) http.Handler {
+	return validatedBySpec(t, NewServer(Deps{DB: db, Logger: discardLogger()}).Routes())
 }
 
 func do(t *testing.T, h http.Handler, req *http.Request) *httptest.ResponseRecorder {
@@ -51,7 +51,7 @@ func TestHealthEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := do(t, newTestHandler(fakePinger{err: tt.dbErr}), httptest.NewRequest(http.MethodGet, tt.path, nil))
+			rec := do(t, newTestHandler(t, fakePinger{err: tt.dbErr}), httptest.NewRequest(http.MethodGet, tt.path, nil))
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
@@ -64,7 +64,7 @@ func TestHealthEndpoints(t *testing.T) {
 }
 
 func TestRouterFallbacksUseJSONErrors(t *testing.T) {
-	h := newTestHandler(fakePinger{})
+	h := newTestHandler(t, fakePinger{})
 
 	t.Run("unknown path", func(t *testing.T) {
 		rec := do(t, h, httptest.NewRequest(http.MethodGet, "/nope", nil))
@@ -91,7 +91,7 @@ func TestRouterFallbacksUseJSONErrors(t *testing.T) {
 }
 
 func TestRequestID(t *testing.T) {
-	h := newTestHandler(fakePinger{})
+	h := newTestHandler(t, fakePinger{})
 
 	t.Run("generated when missing", func(t *testing.T) {
 		rec := do(t, h, httptest.NewRequest(http.MethodGet, "/healthz", nil))

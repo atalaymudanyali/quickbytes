@@ -1,0 +1,1062 @@
+openapi: 3.0.3
+
+info:
+  title: QuickBytes API
+  version: 0.1.0
+  description: |
+    Backend for QuickBytes, a food delivery platform set in Istanbul.
+
+    **Logging in.** `POST /auth/login` (or `/auth/signup`) returns a short-lived
+    access token and a refresh token. Send the access token on protected requests as
+    `Authorization: Bearer <access_token>`. When it expires (after 15 minutes), swap
+    the refresh token for a new pair at `POST /auth/refresh`. Each refresh token works
+    once.
+
+    **Errors** always have the same shape: `{"error": {"code", "message", "request_id"}}`.
+    `code` is stable and meant for programs; `message` is for people. Every response
+    carries an `X-Request-ID` header that matches the server's log line for it.
+
+    **Money** is always a whole number of kuruş: `32000` means 320,00 TL.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development (`make up`)
+
+tags:
+  - name: health
+    description: Is the service alive and able to work?
+  - name: auth
+    description: Sign up, log in, and keep a session going.
+  - name: profiles
+    description: The roles a user can play (customer, restaurant owner, driver).
+  - name: restaurants
+    description: Finding and managing restaurants.
+  - name: menus
+    description: Reading and managing a restaurant's menu.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Is the process alive?
+      description: Never checks dependencies, so a database outage doesn't get healthy copies restarted.
+      responses:
+        "200":
+          description: The process is running.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadiness
+      summary: Can this copy serve traffic right now?
+      description: Checks that the database answers. A load balancer stops sending requests to a copy that isn't ready.
+      responses:
+        "200":
+          description: Ready.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ready] }
+        "503":
+          description: The database can't be reached (code `unavailable`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/signup:
+    post:
+      tags: [auth]
+      operationId: signUp
+      summary: Create an account and log in
+      description: The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Account created and logged in.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountWithTokens" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "409":
+          description: An account with this email already exists (code `email_taken`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: logIn
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in. A new token family is started.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountWithTokens" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401":
+          description: |
+            Email or password is incorrect (code `invalid_credentials`). An unknown email
+            and a wrong password give the same answer, in the same time.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Swap a refresh token for a new token pair
+      description: |
+        Each refresh token works once and is replaced by the one in the response. Sending
+        an already-used token revokes every token from that login (possible theft), and
+        the user has to log in again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: A new token pair. The roles in the new access token are read fresh, so newly added profiles appear.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401":
+          description: The refresh token is invalid, expired, revoked or already used (code `invalid_refresh_token`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logOut
+      summary: Log out
+      description: |
+        Revokes the refresh token and every token from the same login. Always succeeds,
+        even for unknown tokens. The current access token keeps working until it
+        expires (at most 15 minutes).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "204":
+          description: Logged out.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /me:
+    get:
+      tags: [profiles]
+      operationId: getMe
+      summary: The signed-in user and their profiles
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current user.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /me/profiles:
+    post:
+      tags: [profiles]
+      operationId: addProfile
+      summary: Add a restaurant or driver profile
+      description: |
+        The current access token doesn't list the new role yet. Call `POST /auth/refresh`
+        afterwards to get one that does.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [restaurant, driver]
+                  description: Every user already has a customer profile.
+      responses:
+        "201":
+          description: Profile added.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409":
+          description: The user already has this profile (code `profile_exists`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants:
+    get:
+      tags: [restaurants]
+      operationId: searchRestaurants
+      summary: Restaurants that deliver to a point
+      description: |
+        Returns restaurants whose delivery zone contains the point, closest first, with
+        the distance in metres. Restaurants not accepting orders are included with their
+        flag. Paginated: send `next_cursor` back as `cursor` to get the next page; it's
+        `null` on the last page. No login needed.
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Latitude" }
+        - name: lng
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Longitude" }
+        - name: limit
+          in: query
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          description: The `next_cursor` from the previous page. Opaque; send it back unchanged.
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of results.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [restaurants, next_cursor]
+                properties:
+                  restaurants:
+                    type: array
+                    items: { $ref: "#/components/schemas/NearbyRestaurant" }
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    description: Send as `cursor` for the next page. `null` on the last page.
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      tags: [restaurants]
+      operationId: createRestaurant
+      summary: Create a restaurant
+      description: Needs a restaurant profile. The delivery radius defaults to 3 km, and new restaurants accept orders.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RestaurantCreate" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Restaurant" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    get:
+      tags: [restaurants]
+      operationId: getRestaurant
+      summary: One restaurant
+      description: No login needed.
+      responses:
+        "200":
+          description: The restaurant.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Restaurant" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+    patch:
+      tags: [restaurants]
+      operationId: updateRestaurant
+      summary: Change a restaurant
+      description: Only the fields sent are changed. `lat` and `lng` must be sent together. Another owner's restaurant gets the same 404 as a missing one.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RestaurantPatch" }
+      responses:
+        "200":
+          description: The updated restaurant.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Restaurant" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /me/restaurants:
+    get:
+      tags: [restaurants]
+      operationId: listMyRestaurants
+      summary: The signed-in owner's restaurants
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The owner's restaurants, oldest first.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [restaurants]
+                properties:
+                  restaurants:
+                    type: array
+                    items: { $ref: "#/components/schemas/Restaurant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+
+  /restaurants/{id}/menu:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    get:
+      tags: [menus]
+      operationId: getMenu
+      summary: A restaurant's menu
+      description: |
+        Sections and dishes in the owner's order. Sold-out dishes are included with
+        `"available": false` (show them greyed out); archived sections and dishes are left
+        out. No login needed.
+      responses:
+        "200":
+          description: The menu.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+
+  /me/restaurants/{id}/menu:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    get:
+      tags: [menus]
+      operationId: getOwnerMenu
+      summary: The owner's full menu
+      description: Like the public menu, but archived sections and dishes are included, with `archived_at` set, so they can be restored.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The full menu.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+
+  /restaurants/{id}/menu/categories:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    post:
+      tags: [menus]
+      operationId: createCategory
+      summary: Add a menu section
+      description: Added at the end of the menu.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { $ref: "#/components/schemas/CategoryName" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/categories/order:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    put:
+      tags: [menus]
+      operationId: reorderCategories
+      summary: Set the order of the menu's sections
+      description: |
+        Send every visible (not archived) section exactly once, in the new order. A list
+        that's incomplete, repeats a section or includes another menu's gets a 422, and
+        nothing moves. Safe to repeat.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [category_ids]
+              properties:
+                category_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The owner's menu in its new order.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/categories/{category_id}:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/CategoryID"
+    patch:
+      tags: [menus]
+      operationId: updateCategory
+      summary: Rename, archive or restore a section
+      description: Archiving hides the section and everything in it from customers. Its dishes keep their own archived state, so restoring brings back exactly what was visible.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { $ref: "#/components/schemas/CategoryName" }
+                archived: { type: boolean, description: "true: remove from the menu. false: restore." }
+      responses:
+        "200":
+          description: The updated section.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/categories/{category_id}/order:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/CategoryID"
+    put:
+      tags: [menus]
+      operationId: reorderItems
+      summary: Set the order of the dishes in a section
+      description: Send every visible dish of the section exactly once, in the new order. Same rules as reordering sections. The section must not be archived.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [item_ids]
+              properties:
+                item_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The owner's menu in its new order.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/items:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    post:
+      tags: [menus]
+      operationId: createItem
+      summary: Add a dish
+      description: Added at the end of its section. The section must belong to this restaurant and not be archived (otherwise 422 on `category_id`).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [category_id, name, price_kurus]
+              properties:
+                category_id: { type: string, format: uuid }
+                name: { $ref: "#/components/schemas/ItemName" }
+                description: { $ref: "#/components/schemas/ItemDescription" }
+                price_kurus: { $ref: "#/components/schemas/PriceKurus" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/items/{item_id}:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/ItemID"
+    patch:
+      tags: [menus]
+      operationId: updateItem
+      summary: Change a dish
+      description: |
+        Only the fields sent are changed. Mark sold out with `"available": false`, remove
+        from the menu with `"archived": true`, restore with `"archived": false`. Moving to
+        another section (`category_id`) puts the dish at the end of it.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                category_id: { type: string, format: uuid }
+                name: { $ref: "#/components/schemas/ItemName" }
+                description: { $ref: "#/components/schemas/ItemDescription" }
+                price_kurus: { $ref: "#/components/schemas/PriceKurus" }
+                available: { type: boolean, description: "false: sold out for now (shown greyed out)." }
+                archived: { type: boolean, description: "true: remove from the menu. false: restore." }
+      responses:
+        "200":
+          description: The updated dish.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The `access_token` from login, sign-up or refresh. Valid for 15 minutes.
+
+  headers:
+    RequestID:
+      description: A unique ID for this request, also written in the server's log. A client may send its own (letters, digits, `.`, `_`, `-`, up to 64 characters).
+      schema: { type: string }
+
+  parameters:
+    RestaurantID:
+      name: id
+      in: path
+      required: true
+      description: The restaurant's ID. Anything that isn't a UUID gets a 404.
+      schema: { type: string }
+    CategoryID:
+      name: category_id
+      in: path
+      required: true
+      description: The menu section's ID.
+      schema: { type: string }
+    ItemID:
+      name: item_id
+      in: path
+      required: true
+      description: The dish's ID.
+      schema: { type: string }
+
+  responses:
+    InvalidJSON:
+      description: The body isn't valid JSON for this endpoint, has unknown fields, or contains more than one object (code `invalid_json`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: 'The request has a body that isn''t marked as JSON. Send it with `Content-Type: application/json` (code `unsupported_media_type`).'
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BodyTooLarge:
+      description: The body is larger than 1 MiB (code `body_too_large`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationFailed:
+      description: Some fields are invalid (code `validation_failed`). `fields` names each one and what's wrong with it.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: validation_failed
+              message: some fields are invalid
+              fields:
+                email: must be a valid email address
+                password: must be 8 to 128 characters
+              request_id: 0c045729a68d831e5cc32825
+    Unauthenticated:
+      description: No valid access token was sent (code `unauthenticated`). Log in or refresh.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        WWW-Authenticate:
+          description: Always `Bearer realm="quickbytes"`.
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+    ProfileRequired:
+      description: Logged in, but without the profile this needs, e.g. a customer creating a restaurant (code `profile_required`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RestaurantNotFound:
+      description: No such restaurant, or not yours where ownership matters; the two look the same on purpose (code `restaurant_not_found`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    MenuEntryNotFound:
+      description: The restaurant (code `restaurant_not_found`), section (`category_not_found`) or dish (`item_not_found`) in the URL doesn't exist or isn't yours.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable, for programs to check, e.g. `email_taken`, `invalid_credentials`, `validation_failed`.
+              example: email_taken
+            message:
+              type: string
+              description: For people. The wording may change.
+              example: an account with this email already exists
+            fields:
+              type: object
+              description: Only for `validation_failed`. Each invalid field and what's wrong with it.
+              additionalProperties: { type: string }
+            request_id:
+              type: string
+              description: The same value as the `X-Request-ID` header.
+              example: 0c045729a68d831e5cc32825
+
+    SignupRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: A plain address. Upper and lower case count as the same email.
+          example: ayse@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: 8 to 128 characters (counted as characters, so "ş" is one).
+          example: güvenli-şifre
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Ayşe Yılmaz
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, example: ayse@example.com }
+        password: { type: string, example: güvenli-şifre }
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: The refresh token from the latest login, sign-up or refresh.
+
+    User:
+      type: object
+      required: [id, email, full_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email, example: ayse@example.com }
+        full_name: { type: string, example: Ayşe Yılmaz }
+        created_at: { type: string, format: date-time }
+
+    Profile:
+      type: object
+      required: [id, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        role:
+          type: string
+          enum: [customer, restaurant, driver]
+        created_at: { type: string, format: date-time }
+
+    TokenPair:
+      type: object
+      required: [token_type, access_token, access_expires_at, refresh_token]
+      properties:
+        token_type:
+          type: string
+          enum: [Bearer]
+        access_token:
+          type: string
+          description: "A JWT. Send it as `Authorization: Bearer <access_token>`. Its payload lists the user's roles."
+        access_expires_at:
+          type: string
+          format: date-time
+          description: When the access token stops working (15 minutes after it was issued).
+        refresh_token:
+          type: string
+          description: Works once. Store it securely (the iOS Keychain) and send it to `/auth/refresh`.
+
+    Account:
+      type: object
+      required: [user, profiles]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/Profile" }
+
+    AccountWithTokens:
+      allOf:
+        - $ref: "#/components/schemas/Account"
+        - type: object
+          required: [tokens]
+          properties:
+            tokens: { $ref: "#/components/schemas/TokenPair" }
+
+    Latitude:
+      type: number
+      format: double
+      minimum: 40.8
+      maximum: 41.6
+      description: Latitude (north–south), inside Istanbul.
+      example: 40.9917
+    Longitude:
+      type: number
+      format: double
+      minimum: 27.95
+      maximum: 29.95
+      description: Longitude (east–west), inside Istanbul.
+      example: 29.0233
+
+    Restaurant:
+      type: object
+      required: [id, name, address, lat, lng, delivery_radius_m, accepting_orders, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Çiya Sofrası }
+        address: { type: string, example: "Güneşli Bahçe Sk. No:43, Kadıköy" }
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+        delivery_radius_m:
+          type: integer
+          minimum: 500
+          maximum: 10000
+          description: How far the restaurant delivers, in metres.
+          example: 3000
+        accepting_orders: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NearbyRestaurant:
+      allOf:
+        - $ref: "#/components/schemas/Restaurant"
+        - type: object
+          required: [distance_m]
+          properties:
+            distance_m:
+              type: number
+              format: double
+              description: Distance from the search point, in metres.
+              example: 273.4
+
+    RestaurantCreate:
+      type: object
+      additionalProperties: false
+      required: [name, address, lat, lng]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100, example: Çiya Sofrası }
+        address: { type: string, minLength: 1, maxLength: 300, example: "Güneşli Bahçe Sk. No:43, Kadıköy" }
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+        delivery_radius_m:
+          type: integer
+          minimum: 500
+          maximum: 10000
+          default: 3000
+
+    RestaurantPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Send only what changes. `lat` and `lng` go together.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        address: { type: string, minLength: 1, maxLength: 300 }
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+        delivery_radius_m: { type: integer, minimum: 500, maximum: 10000 }
+        accepting_orders: { type: boolean }
+
+    CategoryName:
+      type: string
+      minLength: 1
+      maxLength: 60
+      example: Kebaplar
+    ItemName:
+      type: string
+      minLength: 1
+      maxLength: 100
+      example: Adana Kebap
+    ItemDescription:
+      type: string
+      maxLength: 500
+      example: Acılı, közlenmiş biberle
+    PriceKurus:
+      type: integer
+      minimum: 1
+      maximum: 10000000
+      description: "Price in kuruş, as a whole number: 32000 = 320,00 TL. Decimals are rejected."
+      example: 32000
+
+    Category:
+      type: object
+      required: [id, name, position]
+      properties:
+        id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/CategoryName" }
+        position:
+          type: integer
+          description: Display order, 1 first.
+        archived_at:
+          type: string
+          format: date-time
+          description: Only present when archived (only in the owner's view).
+
+    Item:
+      type: object
+      required: [id, category_id, name, description, price_kurus, available, position]
+      properties:
+        id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/ItemName" }
+        description: { type: string, description: "May be empty." }
+        price_kurus: { $ref: "#/components/schemas/PriceKurus" }
+        available:
+          type: boolean
+          description: false = sold out for now. Show greyed out; can't be ordered.
+        position:
+          type: integer
+          description: Display order within its section, 1 first.
+        archived_at:
+          type: string
+          format: date-time
+          description: Only present when archived (only in the owner's view).
+
+    MenuCategory:
+      allOf:
+        - $ref: "#/components/schemas/Category"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Item" }
+
+    Menu:
+      type: object
+      required: [restaurant_id, version, categories]
+      properties:
+        restaurant_id: { type: string, format: uuid }
+        version:
+          type: integer
+          format: int64
+          description: Goes up with every change to the menu. Compare it to know whether a stored copy is out of date.
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/MenuCategory" }

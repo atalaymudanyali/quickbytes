@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 )
 
@@ -58,10 +59,17 @@ func (s *Server) writeInternalError(w http.ResponseWriter, r *http.Request, err 
 
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// decodeJSON reads a JSON request body into dst. It rejects bodies over 1 MiB,
+// decodeJSON reads a JSON request body into dst. It requires the
+// "Content-Type: application/json" header, and rejects bodies over 1 MiB,
 // unknown fields (usually a typo in the client) and anything after the object.
 // It writes the error response itself and returns false on failure.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	// "application/json; charset=utf-8" is fine too, so parse instead of comparing.
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		writeError(w, r, http.StatusUnsupportedMediaType, "unsupported_media_type",
+			`the body must be JSON, sent with "Content-Type: application/json"`)
+		return false
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {

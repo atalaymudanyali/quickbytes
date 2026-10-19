@@ -1,6 +1,6 @@
 TEST_DATABASE_URL ?= postgres://quickbytes:quickbytes@localhost:5432/quickbytes_test?sslmode=disable
 
-.PHONY: up down db run test lint fmt bench-near-me
+.PHONY: up down db run test lint fmt bench-near-me swagger-ui
 
 up: ## Start everything (database + API) in Docker
 	docker compose up --build -d
@@ -26,3 +26,6 @@ fmt:
 
 bench-near-me: db ## Time the near-me query on 100k generated restaurants, without and with the index
 	docker compose exec -T postgres psql -q -U quickbytes -d quickbytes -f - < scripts/bench-near-me.sql
+
+swagger-ui: ## Download the pinned Swagger UI release (checksum-verified) into api/swaggerui
+	./scripts/update-swagger-ui.sh

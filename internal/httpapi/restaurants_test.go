@@ -28,6 +28,9 @@ func ownerToken(t *testing.T, h http.Handler) string {
 func send(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
