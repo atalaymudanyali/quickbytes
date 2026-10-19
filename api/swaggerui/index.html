@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- Our own page (not part of the Swagger UI download): loads the embedded
+     Swagger UI and points it at the API's spec. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuickBytes API</title>
+  <link rel="stylesheet" href="swagger-ui.css">
+  <link rel="icon" type="image/png" href="favicon-32x32.png" sizes="32x32">
+  <link rel="icon" type="image/png" href="favicon-16x16.png" sizes="16x16">
+  <style>body { margin: 0; }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "/openapi.yaml",
+      dom_id: "#swagger-ui",
+      // Remember the pasted access token across page reloads (this browser only).
+      persistAuthorization: true,
+      // Each endpoint gets its own link, e.g. /docs/#/auth/logIn.
+      deepLinking: true,
+      // Show how long each "Try it out" request took.
+      displayRequestDuration: true,
+    });
+  </script>
+</body>
+</html>

@@ -113,6 +113,11 @@ func (s *Server) Routes() http.Handler {
 	for _, rt := range s.routes() {
 		mux.Handle(rt.pattern, rt.handler)
 	}
+	// Documentation, outside the API itself.
+	docs := docsHandler()
+	mux.Handle("GET /openapi.yaml", docs)
+	mux.Handle("GET /docs", docs)
+	mux.Handle("GET /docs/", docs)
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.
