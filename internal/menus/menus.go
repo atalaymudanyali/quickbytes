@@ -45,6 +45,17 @@ type ItemPatch struct {
 	Description *string
 	PriceKurus  *int
 	Available   *bool
+	// Archived true removes the item from the menu (kept, restorable); false
+	// restores it.
+	Archived *bool
+}
+
+// CategoryPatch holds the fields an owner can change on a category.
+type CategoryPatch struct {
+	Name *string
+	// Archived true hides the category; false restores it. Its items keep their
+	// own archived state, so restoring brings back exactly what was visible.
+	Archived *bool
 }
 
 const MaxPriceKurus = 10_000_000 // 100,000 TL
@@ -119,28 +130,27 @@ func (s *Store) CreateCategory(ctx context.Context, restaurantID, ownerProfileID
 	return c, err
 }
 
-func (s *Store) RenameCategory(ctx context.Context, restaurantID, ownerProfileID, categoryID uuid.UUID, name string) (Category, error) {
-	return s.updateCategory(ctx, restaurantID, ownerProfileID, categoryID,
-		`name = $3, updated_at = now()`, name)
+// archivedAtSQL is the SQL for applying an optional "archived" flag ($n) to
+// archived_at: NULL leaves it alone, true stamps it (keeping an existing stamp),
+// false clears it.
+func archivedAtSQL(param string) string {
+	return `CASE WHEN ` + param + `::bool IS NULL THEN archived_at
+	             WHEN ` + param + ` THEN COALESCE(archived_at, now())
+	             ELSE NULL END`
 }
 
-// SetCategoryArchived hides (true) or restores (false) a category. Its items keep
-// their own archived state: restoring the category brings back exactly the items
-// that were visible before.
-func (s *Store) SetCategoryArchived(ctx context.Context, restaurantID, ownerProfileID, categoryID uuid.UUID, archived bool) (Category, error) {
-	return s.updateCategory(ctx, restaurantID, ownerProfileID, categoryID,
-		`archived_at = CASE WHEN $3 THEN COALESCE(archived_at, now()) ELSE NULL END, updated_at = now()`, archived)
-}
-
-func (s *Store) updateCategory(ctx context.Context, restaurantID, ownerProfileID, categoryID uuid.UUID, set string, arg any) (Category, error) {
+func (s *Store) UpdateCategory(ctx context.Context, restaurantID, ownerProfileID, categoryID uuid.UUID, p CategoryPatch) (Category, error) {
 	var c Category
 	err := s.change(ctx, restaurantID, ownerProfileID, func(tx pgx.Tx) error {
 		var err error
 		c, err = scanCategory(tx.QueryRow(ctx, `
-			UPDATE menu_categories SET `+set+`
+			UPDATE menu_categories SET
+				name        = COALESCE($3, name),
+				archived_at = `+archivedAtSQL("$4")+`,
+				updated_at  = now()
 			WHERE id = $1 AND restaurant_id = $2
 			RETURNING `+categoryColumns,
-			categoryID, restaurantID, arg))
+			categoryID, restaurantID, p.Name, p.Archived))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCategoryNotFound
 		}
@@ -185,7 +195,8 @@ func (s *Store) CreateItem(ctx context.Context, restaurantID, ownerProfileID uui
 }
 
 // UpdateItem applies a patch. Moving an item to another category puts it at the
-// end of that category.
+// end of that category. Moving it into an archived category is refused, but an
+// archived item can be edited in place.
 func (s *Store) UpdateItem(ctx context.Context, restaurantID, ownerProfileID, itemID uuid.UUID, p ItemPatch) (Item, error) {
 	var it Item
 	err := s.change(ctx, restaurantID, ownerProfileID, func(tx pgx.Tx) error {
@@ -204,38 +215,16 @@ func (s *Store) UpdateItem(ctx context.Context, restaurantID, ownerProfileID, it
 				description = COALESCE($5, description),
 				price_kurus = COALESCE($6, price_kurus),
 				available   = COALESCE($7, available),
+				archived_at = `+archivedAtSQL("$8")+`,
 				updated_at  = now()
 			WHERE id = $1 AND restaurant_id = $2
 			RETURNING `+itemColumns,
-			itemID, restaurantID, p.CategoryID, p.Name, p.Description, p.PriceKurus, p.Available))
+			itemID, restaurantID, p.CategoryID, p.Name, p.Description, p.PriceKurus, p.Available, p.Archived))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrItemNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("update item: %w", err)
-		}
-		return nil
-	})
-	return it, err
-}
-
-// SetItemArchived hides (true) or restores (false) an item.
-func (s *Store) SetItemArchived(ctx context.Context, restaurantID, ownerProfileID, itemID uuid.UUID, archived bool) (Item, error) {
-	var it Item
-	err := s.change(ctx, restaurantID, ownerProfileID, func(tx pgx.Tx) error {
-		var err error
-		it, err = scanItem(tx.QueryRow(ctx, `
-			UPDATE menu_items SET
-				archived_at = CASE WHEN $3 THEN COALESCE(archived_at, now()) ELSE NULL END,
-				updated_at  = now()
-			WHERE id = $1 AND restaurant_id = $2
-			RETURNING `+itemColumns,
-			itemID, restaurantID, archived))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrItemNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("archive item: %w", err)
 		}
 		return nil
 	})

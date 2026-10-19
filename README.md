@@ -53,6 +53,11 @@ make down      # stop everything
 | `POST /restaurants` | Create a restaurant (needs a restaurant profile). |
 | `PATCH /restaurants/{id}` | Change only the fields sent. Owner only; anyone else gets 404. |
 | `GET /me/restaurants` | The signed-in owner's restaurants. |
+| `GET /me/restaurants/{id}/menu` | The owner's full menu, archived categories and items included (marked). |
+| `POST /restaurants/{id}/menu/categories` | Add a menu section, e.g. "Kebaplar". Owner only. |
+| `PATCH /restaurants/{id}/menu/categories/{category_id}` | Rename, archive (`"archived": true`) or restore it. |
+| `POST /restaurants/{id}/menu/items` | Add a dish: category, name, description, price in kuruş (`32000` = 320 TL). |
+| `PATCH /restaurants/{id}/menu/items/{item_id}` | Change any field, mark sold out (`"available": false`), move category, archive or restore. |
 
 Errors always look like
 `{"error": {"code": "...", "message": "...", "request_id": "..."}}`, and every

@@ -143,14 +143,14 @@ func TestItemsNeedAnActiveCategoryOfTheSameRestaurant(t *testing.T) {
 		t.Errorf("another restaurant's category: err = %v, want ErrCategoryNotFound", err)
 	}
 
-	if _, err := f.menus.SetCategoryArchived(ctx, r.id, r.owner, kebabs.ID, true); err != nil {
+	if _, err := f.menus.UpdateCategory(ctx, r.id, r.owner, kebabs.ID, menus.CategoryPatch{Archived: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := add(kebabs.ID); !errors.Is(err, menus.ErrCategoryNotFound) {
 		t.Errorf("archived category: err = %v, want ErrCategoryNotFound", err)
 	}
 
-	restored, err := f.menus.SetCategoryArchived(ctx, r.id, r.owner, kebabs.ID, false)
+	restored, err := f.menus.UpdateCategory(ctx, r.id, r.owner, kebabs.ID, menus.CategoryPatch{Archived: ptr(false)})
 	if err != nil || restored.ArchivedAt != nil {
 		t.Fatalf("restore: %+v, %v", restored, err)
 	}
@@ -199,11 +199,11 @@ func TestArchiveAndRestoreItem(t *testing.T) {
 	soups := f.category(t, r, "Çorbalar")
 	lentil := f.item(t, r, soups.ID, "Mercimek Çorbası", 9000)
 
-	archived, err := f.menus.SetItemArchived(ctx, r.id, r.owner, lentil.ID, true)
+	archived, err := f.menus.UpdateItem(ctx, r.id, r.owner, lentil.ID, menus.ItemPatch{Archived: ptr(true)})
 	if err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive: %+v, %v", archived, err)
 	}
-	restored, err := f.menus.SetItemArchived(ctx, r.id, r.owner, lentil.ID, false)
+	restored, err := f.menus.UpdateItem(ctx, r.id, r.owner, lentil.ID, menus.ItemPatch{Archived: ptr(false)})
 	if err != nil || restored.ArchivedAt != nil || restored.Name != "Mercimek Çorbası" {
 		t.Fatalf("restore: %+v, %v", restored, err)
 	}
@@ -254,3 +254,5 @@ func TestSimultaneousAddsGetDifferentPositions(t *testing.T) {
 		}
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
