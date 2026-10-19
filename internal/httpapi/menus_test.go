@@ -150,3 +150,41 @@ func TestMenuValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestReorderEndpoints(t *testing.T) {
+	f := newMenuFixture(t)
+	soups := decode[menus.Category](t, send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Çorbalar"}`), http.StatusCreated)
+	kebabs := decode[menus.Category](t, send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Kebaplar"}`), http.StatusCreated)
+	addItem := func(name string) menus.Item {
+		return decode[menus.Item](t, send(t, f.h, http.MethodPost, f.base+"/items", f.owner,
+			`{"category_id": "`+kebabs.ID.String()+`", "name": "`+name+`", "price_kurus": 30000}`), http.StatusCreated)
+	}
+	adana, urfa := addItem("Adana"), addItem("Urfa")
+
+	m := decode[menus.Menu](t, send(t, f.h, http.MethodPut, f.base+"/categories/order", f.owner,
+		`{"category_ids": ["`+kebabs.ID.String()+`", "`+soups.ID.String()+`"]}`), http.StatusOK)
+	if m.Categories[0].Name != "Kebaplar" {
+		t.Fatalf("categories not reordered: first is %q", m.Categories[0].Name)
+	}
+
+	m = decode[menus.Menu](t, send(t, f.h, http.MethodPut, f.base+"/categories/"+kebabs.ID.String()+"/order", f.owner,
+		`{"item_ids": ["`+urfa.ID.String()+`", "`+adana.ID.String()+`"]}`), http.StatusOK)
+	if m.Categories[0].Items[0].Name != "Urfa" {
+		t.Fatalf("items not reordered: first is %q", m.Categories[0].Items[0].Name)
+	}
+
+	t.Run("incomplete list", func(t *testing.T) {
+		rec := send(t, f.h, http.MethodPut, f.base+"/categories/order", f.owner, `{"category_ids": ["`+kebabs.ID.String()+`"]}`)
+		if rec.Code != http.StatusUnprocessableEntity || decodeError(t, rec).Fields["category_ids"] == "" {
+			t.Fatalf("status = %d, want 422 about category_ids", rec.Code)
+		}
+	})
+
+	t.Run("another owner", func(t *testing.T) {
+		rec := send(t, f.h, http.MethodPut, f.base+"/categories/order", ownerToken(t, f.h),
+			`{"category_ids": ["`+kebabs.ID.String()+`", "`+soups.ID.String()+`"]}`)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
+}

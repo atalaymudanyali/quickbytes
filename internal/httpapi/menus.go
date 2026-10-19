@@ -258,3 +258,86 @@ func pathID(w http.ResponseWriter, r *http.Request, name, code, message string) 
 	}
 	return id, true
 }
+
+// --- Reordering ---------------------------------------------------------------
+
+// maxOrderLen caps how many IDs one reorder request may list. A real menu has a
+// few dozen; the cap keeps a malicious request from sending millions.
+const maxOrderLen = 500
+
+type categoryOrderRequest struct {
+	CategoryIDs []uuid.UUID `json:"category_ids"`
+}
+
+type itemOrderRequest struct {
+	ItemIDs []uuid.UUID `json:"item_ids"`
+}
+
+// handleReorderCategories answers PUT /restaurants/{id}/menu/categories/order.
+// PUT because the request replaces the whole order: sending it twice has the same
+// effect as sending it once.
+func (s *Server) handleReorderCategories(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantID(w, r)
+	if !ok {
+		return
+	}
+	var req categoryOrderRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.CategoryIDs) == 0 || len(req.CategoryIDs) > maxOrderLen {
+		writeValidationError(w, r, map[string]string{"category_ids": fmt.Sprintf("must list 1 to %d categories", maxOrderLen)})
+		return
+	}
+	owner, ok := s.restaurantProfile(w, r)
+	if !ok {
+		return
+	}
+	err := s.menus.ReorderCategories(r.Context(), restaurantID, owner, req.CategoryIDs)
+	s.respondWithOwnerMenu(w, r, restaurantID, owner, err, "category_ids")
+}
+
+// handleReorderItems answers PUT /restaurants/{id}/menu/categories/{category_id}/order.
+func (s *Server) handleReorderItems(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantID(w, r)
+	if !ok {
+		return
+	}
+	categoryID, ok := pathID(w, r, "category_id", "category_not_found", "no such category")
+	if !ok {
+		return
+	}
+	var req itemOrderRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.ItemIDs) == 0 || len(req.ItemIDs) > maxOrderLen {
+		writeValidationError(w, r, map[string]string{"item_ids": fmt.Sprintf("must list 1 to %d items", maxOrderLen)})
+		return
+	}
+	owner, ok := s.restaurantProfile(w, r)
+	if !ok {
+		return
+	}
+	err := s.menus.ReorderItems(r.Context(), restaurantID, owner, categoryID, req.ItemIDs)
+	s.respondWithOwnerMenu(w, r, restaurantID, owner, err, "item_ids")
+}
+
+// respondWithOwnerMenu finishes a reorder: on success it returns the owner's menu
+// in its new order, so the app can redraw without a second request.
+func (s *Server) respondWithOwnerMenu(w http.ResponseWriter, r *http.Request, restaurantID, owner uuid.UUID, err error, field string) {
+	if errors.Is(err, menus.ErrOrderMismatch) {
+		writeValidationError(w, r, map[string]string{field: "must list every active entry exactly once, with nothing extra"})
+		return
+	}
+	if err != nil {
+		s.writeMenuError(w, r, err)
+		return
+	}
+	m, err := s.menus.Menu(r.Context(), restaurantID, menus.View{OwnerProfileID: owner})
+	if err != nil {
+		s.writeMenuError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}

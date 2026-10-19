@@ -87,6 +87,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PATCH /restaurants/{id}/menu/categories/{category_id}", ownerOnly(s.handleUpdateCategory))
 	mux.Handle("POST /restaurants/{id}/menu/items", ownerOnly(s.handleCreateItem))
 	mux.Handle("PATCH /restaurants/{id}/menu/items/{item_id}", ownerOnly(s.handleUpdateItem))
+	mux.Handle("PUT /restaurants/{id}/menu/categories/order", ownerOnly(s.handleReorderCategories))
+	mux.Handle("PUT /restaurants/{id}/menu/categories/{category_id}/order", ownerOnly(s.handleReorderItems))
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.
