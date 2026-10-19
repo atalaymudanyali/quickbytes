@@ -81,7 +81,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant))
 	mux.Handle("GET /me/restaurants", ownerOnly(s.handleMyRestaurants))
 
-	// Menus: managed by the restaurant's owner.
+	// Menus: anyone can read one, only the restaurant's owner can change it.
+	mux.HandleFunc("GET /restaurants/{id}/menu", s.handleMenu)
 	mux.Handle("GET /me/restaurants/{id}/menu", ownerOnly(s.handleOwnerMenu))
 	mux.Handle("POST /restaurants/{id}/menu/categories", ownerOnly(s.handleCreateCategory))
 	mux.Handle("PATCH /restaurants/{id}/menu/categories/{category_id}", ownerOnly(s.handleUpdateCategory))

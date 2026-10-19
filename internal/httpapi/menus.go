@@ -12,6 +12,24 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 )
 
+// --- The public view ----------------------------------------------------------
+
+// handleMenu answers GET /restaurants/{id}/menu for anyone, logged in or not.
+// Archived categories and items are left out; sold-out items are included with
+// "available": false, so the app can show them greyed out.
+func (s *Server) handleMenu(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantID(w, r)
+	if !ok {
+		return
+	}
+	m, err := s.menus.Menu(r.Context(), restaurantID, menus.View{})
+	if err != nil {
+		s.writeMenuError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
 // --- The owner's view ---------------------------------------------------------
 
 // handleOwnerMenu returns the whole menu, archived categories and items included

@@ -53,6 +53,7 @@ make down      # stop everything
 | `POST /restaurants` | Create a restaurant (needs a restaurant profile). |
 | `PATCH /restaurants/{id}` | Change only the fields sent. Owner only; anyone else gets 404. |
 | `GET /me/restaurants` | The signed-in owner's restaurants. |
+| `GET /restaurants/{id}/menu` | A restaurant's menu: sections and dishes in the owner's order, sold-out dishes marked `"available": false`, removed ones left out. Public. |
 | `GET /me/restaurants/{id}/menu` | The owner's full menu, archived categories and items included (marked). |
 | `POST /restaurants/{id}/menu/categories` | Add a menu section, e.g. "Kebaplar". Owner only. |
 | `PATCH /restaurants/{id}/menu/categories/{category_id}` | Rename, archive (`"archived": true`) or restore it. |

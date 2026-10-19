@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
@@ -187,4 +188,47 @@ func TestReorderEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}
 	})
+}
+
+func TestPublicMenu(t *testing.T) {
+	f := newMenuFixture(t)
+	public := f.base // "/restaurants/<id>/menu": the same address the owner writes under
+
+	soups := decode[menus.Category](t, send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Çorbalar"}`), http.StatusCreated)
+	winter := decode[menus.Category](t, send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Kış Menüsü"}`), http.StatusCreated)
+	addItem := func(categoryID, name string) menus.Item {
+		return decode[menus.Item](t, send(t, f.h, http.MethodPost, f.base+"/items", f.owner,
+			`{"category_id": "`+categoryID+`", "name": "`+name+`", "price_kurus": 9000}`), http.StatusCreated)
+	}
+	lentil := addItem(soups.ID.String(), "Mercimek")
+	ezogelin := addItem(soups.ID.String(), "Ezogelin")
+	tarhana := addItem(soups.ID.String(), "Tarhana")
+	addItem(winter.ID.String(), "Kelle Paça")
+
+	send(t, f.h, http.MethodPatch, f.base+"/items/"+ezogelin.ID.String(), f.owner, `{"available": false}`)
+	send(t, f.h, http.MethodPatch, f.base+"/items/"+tarhana.ID.String(), f.owner, `{"archived": true}`)
+	send(t, f.h, http.MethodPatch, f.base+"/categories/"+winter.ID.String(), f.owner, `{"archived": true}`)
+
+	// No token: browsing is public.
+	m := decode[menus.Menu](t, send(t, f.h, http.MethodGet, public, "", ""), http.StatusOK)
+
+	if len(m.Categories) != 1 || m.Categories[0].Name != "Çorbalar" {
+		t.Fatalf("categories = %+v; want only Çorbalar (Kış Menüsü is archived)", m.Categories)
+	}
+	items := m.Categories[0].Items
+	if len(items) != 2 || items[0].ID != lentil.ID || items[1].ID != ezogelin.ID {
+		t.Fatalf("items = %+v; want Mercimek and Ezogelin (Tarhana is archived)", items)
+	}
+	if items[1].Available {
+		t.Error("sold-out Ezogelin should be shown with available: false")
+	}
+	if body := send(t, f.h, http.MethodGet, public, "", "").Body.String(); strings.Contains(body, "archived_at") {
+		t.Errorf("public menu mentions archived_at: %s", body)
+	}
+
+	for _, path := range []string{"/restaurants/01a14bab-224e-7468-8920-42d59bbb55ee/menu", "/restaurants/nope/menu"} {
+		if rec := send(t, f.h, http.MethodGet, path, "", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, rec.Code)
+		}
+	}
 }
