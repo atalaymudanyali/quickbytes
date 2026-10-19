@@ -1,0 +1,425 @@
+openapi: 3.0.3
+
+info:
+  title: QuickBytes API
+  version: 0.1.0
+  description: |
+    Backend for QuickBytes, a food delivery platform set in Istanbul.
+
+    **Logging in.** `POST /auth/login` (or `/auth/signup`) returns a short-lived
+    access token and a refresh token. Send the access token on protected requests as
+    `Authorization: Bearer <access_token>`. When it expires (after 15 minutes), swap
+    the refresh token for a new pair at `POST /auth/refresh`. Each refresh token works
+    once.
+
+    **Errors** always have the same shape: `{"error": {"code", "message", "request_id"}}`.
+    `code` is stable and meant for programs; `message` is for people. Every response
+    carries an `X-Request-ID` header that matches the server's log line for it.
+
+    **Money** is always a whole number of kuruş: `32000` means 320,00 TL.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development (`make up`)
+
+tags:
+  - name: health
+    description: Is the service alive and able to work?
+  - name: auth
+    description: Sign up, log in, and keep a session going.
+  - name: profiles
+    description: The roles a user can play (customer, restaurant owner, driver).
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Is the process alive?
+      description: Never checks dependencies, so a database outage doesn't get healthy copies restarted.
+      responses:
+        "200":
+          description: The process is running.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadiness
+      summary: Can this copy serve traffic right now?
+      description: Checks that the database answers. A load balancer stops sending requests to a copy that isn't ready.
+      responses:
+        "200":
+          description: Ready.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ready] }
+        "503":
+          description: The database can't be reached (code `unavailable`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/signup:
+    post:
+      tags: [auth]
+      operationId: signUp
+      summary: Create an account and log in
+      description: The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Account created and logged in.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountWithTokens" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "409":
+          description: An account with this email already exists (code `email_taken`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: logIn
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in. A new token family is started.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountWithTokens" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401":
+          description: |
+            Email or password is incorrect (code `invalid_credentials`). An unknown email
+            and a wrong password give the same answer, in the same time.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Swap a refresh token for a new token pair
+      description: |
+        Each refresh token works once and is replaced by the one in the response. Sending
+        an already-used token revokes every token from that login (possible theft), and
+        the user has to log in again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: A new token pair. The roles in the new access token are read fresh, so newly added profiles appear.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401":
+          description: The refresh token is invalid, expired, revoked or already used (code `invalid_refresh_token`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logOut
+      summary: Log out
+      description: |
+        Revokes the refresh token and every token from the same login. Always succeeds,
+        even for unknown tokens. The current access token keeps working until it
+        expires (at most 15 minutes).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "204":
+          description: Logged out.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+
+  /me:
+    get:
+      tags: [profiles]
+      operationId: getMe
+      summary: The signed-in user and their profiles
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current user.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /me/profiles:
+    post:
+      tags: [profiles]
+      operationId: addProfile
+      summary: Add a restaurant or driver profile
+      description: |
+        The current access token doesn't list the new role yet. Call `POST /auth/refresh`
+        afterwards to get one that does.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [restaurant, driver]
+                  description: Every user already has a customer profile.
+      responses:
+        "201":
+          description: Profile added.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409":
+          description: The user already has this profile (code `profile_exists`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The `access_token` from login, sign-up or refresh. Valid for 15 minutes.
+
+  headers:
+    RequestID:
+      description: A unique ID for this request, also written in the server's log. A client may send its own (letters, digits, `.`, `_`, `-`, up to 64 characters).
+      schema: { type: string }
+
+  responses:
+    InvalidJSON:
+      description: The body isn't valid JSON for this endpoint, has unknown fields, or contains more than one object (code `invalid_json`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BodyTooLarge:
+      description: The body is larger than 1 MiB (code `body_too_large`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationFailed:
+      description: Some fields are invalid (code `validation_failed`). `fields` names each one and what's wrong with it.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: validation_failed
+              message: some fields are invalid
+              fields:
+                email: must be a valid email address
+                password: must be 8 to 128 characters
+              request_id: 0c045729a68d831e5cc32825
+    Unauthenticated:
+      description: No valid access token was sent (code `unauthenticated`). Log in or refresh.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        WWW-Authenticate:
+          description: Always `Bearer realm="quickbytes"`.
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable, for programs to check, e.g. `email_taken`, `invalid_credentials`, `validation_failed`.
+              example: email_taken
+            message:
+              type: string
+              description: For people. The wording may change.
+              example: an account with this email already exists
+            fields:
+              type: object
+              description: Only for `validation_failed`. Each invalid field and what's wrong with it.
+              additionalProperties: { type: string }
+            request_id:
+              type: string
+              description: The same value as the `X-Request-ID` header.
+              example: 0c045729a68d831e5cc32825
+
+    SignupRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: A plain address. Upper and lower case count as the same email.
+          example: ayse@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: 8 to 128 characters (counted as characters, so "ş" is one).
+          example: güvenli-şifre
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Ayşe Yılmaz
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, example: ayse@example.com }
+        password: { type: string, example: güvenli-şifre }
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: The refresh token from the latest login, sign-up or refresh.
+
+    User:
+      type: object
+      required: [id, email, full_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email, example: ayse@example.com }
+        full_name: { type: string, example: Ayşe Yılmaz }
+        created_at: { type: string, format: date-time }
+
+    Profile:
+      type: object
+      required: [id, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        role:
+          type: string
+          enum: [customer, restaurant, driver]
+        created_at: { type: string, format: date-time }
+
+    TokenPair:
+      type: object
+      required: [token_type, access_token, access_expires_at, refresh_token]
+      properties:
+        token_type:
+          type: string
+          enum: [Bearer]
+        access_token:
+          type: string
+          description: "A JWT. Send it as `Authorization: Bearer <access_token>`. Its payload lists the user's roles."
+        access_expires_at:
+          type: string
+          format: date-time
+          description: When the access token stops working (15 minutes after it was issued).
+        refresh_token:
+          type: string
+          description: Works once. Store it securely (the iOS Keychain) and send it to `/auth/refresh`.
+
+    Account:
+      type: object
+      required: [user, profiles]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/Profile" }
+
+    AccountWithTokens:
+      allOf:
+        - $ref: "#/components/schemas/Account"
+        - type: object
+          required: [tokens]
+          properties:
+            tokens: { $ref: "#/components/schemas/TokenPair" }
