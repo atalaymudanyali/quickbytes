@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -28,6 +29,7 @@ type Deps struct {
 	Tokens      *auth.TokenIssuer
 	Refresh     *auth.RefreshStore
 	Restaurants *restaurants.Store
+	Menus       *menus.Store
 	Logger      *slog.Logger
 }
 
@@ -38,6 +40,7 @@ type Server struct {
 	tokens      *auth.TokenIssuer
 	refresh     *auth.RefreshStore
 	restaurants *restaurants.Store
+	menus       *menus.Store
 	logger      *slog.Logger
 
 	dummyOnce sync.Once
@@ -52,6 +55,7 @@ func NewServer(d Deps) *Server {
 		tokens:      d.Tokens,
 		refresh:     d.Refresh,
 		restaurants: d.Restaurants,
+		menus:       d.Menus,
 		logger:      d.Logger,
 	}
 }
@@ -76,6 +80,16 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /restaurants", ownerOnly(s.handleCreateRestaurant))
 	mux.Handle("PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant))
 	mux.Handle("GET /me/restaurants", ownerOnly(s.handleMyRestaurants))
+
+	// Menus: anyone can read one, only the restaurant's owner can change it.
+	mux.HandleFunc("GET /restaurants/{id}/menu", s.handleMenu)
+	mux.Handle("GET /me/restaurants/{id}/menu", ownerOnly(s.handleOwnerMenu))
+	mux.Handle("POST /restaurants/{id}/menu/categories", ownerOnly(s.handleCreateCategory))
+	mux.Handle("PATCH /restaurants/{id}/menu/categories/{category_id}", ownerOnly(s.handleUpdateCategory))
+	mux.Handle("POST /restaurants/{id}/menu/items", ownerOnly(s.handleCreateItem))
+	mux.Handle("PATCH /restaurants/{id}/menu/items/{item_id}", ownerOnly(s.handleUpdateItem))
+	mux.Handle("PUT /restaurants/{id}/menu/categories/order", ownerOnly(s.handleReorderCategories))
+	mux.Handle("PUT /restaurants/{id}/menu/categories/{category_id}/order", ownerOnly(s.handleReorderItems))
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.

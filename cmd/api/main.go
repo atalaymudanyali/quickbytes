@@ -15,6 +15,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
+	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -61,6 +62,7 @@ func run(logger *slog.Logger) error {
 			Tokens:      tokens,
 			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
 			Restaurants: restaurants.NewStore(pool),
+			Menus:       menus.NewStore(pool),
 			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,

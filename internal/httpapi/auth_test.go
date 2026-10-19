@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -36,6 +37,7 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 		Tokens:      tokens,
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
 		Restaurants: restaurants.NewStore(pool),
+		Menus:       menus.NewStore(pool),
 		Logger:      discardLogger(),
 	})
 	return srv, srv.Routes()
