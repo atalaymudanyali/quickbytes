@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -199,4 +200,70 @@ func validateRestaurant(req restaurantRequest) map[string]string {
 		}
 	}
 	return fields
+}
+
+const (
+	defaultPageSize = 20
+	maxPageSize     = 50
+)
+
+type nearbyResponse struct {
+	Restaurants []restaurants.Nearby `json:"restaurants"`
+	// NextCursor is null on the last page. Otherwise send it back as ?cursor= to
+	// get the next page.
+	NextCursor *string `json:"next_cursor"`
+}
+
+// handleNearbyRestaurants answers GET /restaurants?lat=..&lng=..[&limit=..][&cursor=..]
+// with the restaurants that deliver to that point, closest first.
+func (s *Server) handleNearbyRestaurants(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	fields := map[string]string{}
+
+	lat, latErr := strconv.ParseFloat(q.Get("lat"), 64)
+	lng, lngErr := strconv.ParseFloat(q.Get("lng"), 64)
+	switch {
+	case latErr != nil || lngErr != nil:
+		fields["location"] = "lat and lng query parameters are required numbers"
+	case !restaurants.InIstanbul(lat, lng):
+		fields["location"] = "must be inside Istanbul"
+	}
+
+	limit := defaultPageSize
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxPageSize {
+			fields["limit"] = fmt.Sprintf("must be 1 to %d", maxPageSize)
+		}
+		limit = n
+	}
+
+	var after *restaurants.Cursor
+	if v := q.Get("cursor"); v != "" {
+		c, err := restaurants.DecodeCursor(v)
+		if err != nil {
+			fields["cursor"] = "is not a cursor this API returned"
+		}
+		after = &c
+	}
+
+	if len(fields) > 0 {
+		writeValidationError(w, r, fields)
+		return
+	}
+
+	page, next, err := s.restaurants.Near(r.Context(), lat, lng, limit, after)
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+	resp := nearbyResponse{Restaurants: page}
+	if resp.Restaurants == nil {
+		resp.Restaurants = []restaurants.Nearby{} // [] rather than null in JSON
+	}
+	if next != nil {
+		c := next.Encode()
+		resp.NextCursor = &c
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

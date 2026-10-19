@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,5 +146,44 @@ func TestMyRestaurants(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
 	if rec.Code != http.StatusOK || len(got.Restaurants) != 2 {
 		t.Fatalf("status = %d, %d restaurants; want 200 and the owner's 2", rec.Code, len(got.Restaurants))
+	}
+}
+
+func TestNearbyEndpoint(t *testing.T) {
+	h := newAuthTestHandler(t)
+
+	t.Run("public, with an empty list as [] and no next page", func(t *testing.T) {
+		// A spot in the Black Sea, inside the bounding box but far from any test data.
+		rec := send(t, h, http.MethodGet, "/restaurants?lat=41.55&lng=29.90", "", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; body: %s", rec.Code, rec.Body)
+		}
+		if body := rec.Body.String(); !strings.Contains(body, `"restaurants":[]`) || !strings.Contains(body, `"next_cursor":null`) {
+			t.Fatalf("body = %s", body)
+		}
+	})
+
+	t.Run("finds a restaurant that delivers here", func(t *testing.T) {
+		// A random spot, so leftovers from earlier runs don't push ours off the page.
+		lat, lng := 40.85+rand.Float64()*0.6, 28.10+rand.Float64()*1.6
+		r := createRestaurant(t, h, ownerToken(t, h), fmt.Sprintf(
+			`{"name": "Test Lokanta", "address": "Test Sk. 1", "lat": %f, "lng": %f}`, lat, lng))
+		rec := send(t, h, http.MethodGet, fmt.Sprintf("/restaurants?lat=%f&lng=%f", lat, lng), "", "")
+		if !strings.Contains(rec.Body.String(), r.ID.String()) {
+			t.Fatalf("restaurant %s missing from the results near it", r.ID)
+		}
+	})
+
+	for name, query := range map[string]string{
+		"no location":      "",
+		"outside Istanbul": "?lat=39.93&lng=32.85",
+		"limit too big":    "?lat=40.99&lng=29.02&limit=500",
+		"made-up cursor":   "?lat=40.99&lng=29.02&cursor=abc",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if rec := send(t, h, http.MethodGet, "/restaurants"+query, "", ""); rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422", rec.Code)
+			}
+		})
 	}
 }

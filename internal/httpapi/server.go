@@ -71,6 +71,7 @@ func (s *Server) Routes() http.Handler {
 	ownerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleRestaurant, h))
 	}
+	mux.HandleFunc("GET /restaurants", s.handleNearbyRestaurants)
 	mux.HandleFunc("GET /restaurants/{id}", s.handleGetRestaurant)
 	mux.Handle("POST /restaurants", ownerOnly(s.handleCreateRestaurant))
 	mux.Handle("PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant))
