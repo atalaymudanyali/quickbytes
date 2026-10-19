@@ -40,7 +40,7 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 		Menus:       menus.NewStore(pool),
 		Logger:      discardLogger(),
 	})
-	return srv, srv.Routes()
+	return srv, validatedBySpec(t, srv.Routes())
 }
 
 func postJSON(t *testing.T, h http.Handler, path, body string) *httptest.ResponseRecorder {
@@ -137,4 +137,35 @@ func TestLogin(t *testing.T) {
 	if a.Code != b.Code || a.Message != b.Message {
 		t.Fatalf("failures differ: %+v vs %+v", a, b)
 	}
+}
+
+func TestBodiesMustBeMarkedAsJSON(t *testing.T) {
+	h := newAuthTestHandler(t)
+	body := signupBody(testutil.UniqueEmail(), "correct-password")
+
+	for name, contentType := range map[string]string{
+		"no header":  "",
+		"form":       "application/x-www-form-urlencoded",
+		"plain text": "text/plain",
+		"broken":     "application/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/auth/signup", strings.NewReader(body))
+			if contentType != "" {
+				req.Header.Set("Content-Type", contentType)
+			}
+			rec := do(t, h, req)
+			if rec.Code != http.StatusUnsupportedMediaType || decodeError(t, rec).Code != "unsupported_media_type" {
+				t.Fatalf("status = %d, want 415 unsupported_media_type", rec.Code)
+			}
+		})
+	}
+
+	t.Run("JSON with a charset is fine", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/auth/signup", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		if rec := do(t, h, req); rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", rec.Code)
+		}
+	})
 }

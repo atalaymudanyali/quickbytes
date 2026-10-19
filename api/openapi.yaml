@@ -108,6 +108,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /auth/login:
@@ -139,6 +140,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
 
   /auth/refresh:
     post:
@@ -171,6 +173,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
 
   /auth/logout:
     post:
@@ -193,6 +196,7 @@ paths:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
         "400": { $ref: "#/components/responses/InvalidJSON" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
 
   /me:
     get:
@@ -252,6 +256,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants:
@@ -324,6 +329,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}:
@@ -368,6 +374,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /me/restaurants:
@@ -470,6 +477,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}/menu/categories/order:
@@ -512,6 +520,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}/menu/categories/{category_id}:
@@ -549,6 +558,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/MenuEntryNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}/menu/categories/{category_id}/order:
@@ -589,6 +599,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/MenuEntryNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}/menu/items:
@@ -627,6 +638,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /restaurants/{id}/menu/items/{item_id}:
@@ -671,6 +683,7 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/MenuEntryNotFound" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
 components:
@@ -709,6 +722,13 @@ components:
   responses:
     InvalidJSON:
       description: The body isn't valid JSON for this endpoint, has unknown fields, or contains more than one object (code `invalid_json`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: 'The request has a body that isn''t marked as JSON. Send it with `Content-Type: application/json` (code `unsupported_media_type`).'
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
       content:

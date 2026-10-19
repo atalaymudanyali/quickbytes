@@ -60,36 +60,59 @@ func NewServer(d Deps) *Server {
 	}
 }
 
-func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	mux.HandleFunc("POST /auth/signup", s.handleSignup)
-	mux.HandleFunc("POST /auth/login", s.handleLogin)
-	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
-	mux.HandleFunc("POST /auth/logout", s.handleLogout)
-	mux.Handle("GET /me", s.requireAuth(http.HandlerFunc(s.handleMe)))
-	mux.Handle("POST /me/profiles", s.requireAuth(http.HandlerFunc(s.handleAddProfile)))
+// route is one endpoint: its pattern ("METHOD /path") and its handler. Keeping
+// them in a table, instead of registering each directly, lets tests list every
+// endpoint and compare them with the OpenAPI spec.
+type route struct {
+	pattern string
+	handler http.Handler
+}
 
-	// Restaurants: browsing is public, managing needs a restaurant profile.
+// routes is the full list of endpoints. Every one must also be in
+// api/openapi.yaml; a test fails if the two lists differ.
+func (s *Server) routes() []route {
+	public := func(h http.HandlerFunc) http.Handler { return h }
+	loggedIn := func(h http.HandlerFunc) http.Handler { return s.requireAuth(h) }
+	// Managing restaurants and menus needs a restaurant profile.
 	ownerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleRestaurant, h))
 	}
-	mux.HandleFunc("GET /restaurants", s.handleNearbyRestaurants)
-	mux.HandleFunc("GET /restaurants/{id}", s.handleGetRestaurant)
-	mux.Handle("POST /restaurants", ownerOnly(s.handleCreateRestaurant))
-	mux.Handle("PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant))
-	mux.Handle("GET /me/restaurants", ownerOnly(s.handleMyRestaurants))
 
-	// Menus: anyone can read one, only the restaurant's owner can change it.
-	mux.HandleFunc("GET /restaurants/{id}/menu", s.handleMenu)
-	mux.Handle("GET /me/restaurants/{id}/menu", ownerOnly(s.handleOwnerMenu))
-	mux.Handle("POST /restaurants/{id}/menu/categories", ownerOnly(s.handleCreateCategory))
-	mux.Handle("PATCH /restaurants/{id}/menu/categories/{category_id}", ownerOnly(s.handleUpdateCategory))
-	mux.Handle("POST /restaurants/{id}/menu/items", ownerOnly(s.handleCreateItem))
-	mux.Handle("PATCH /restaurants/{id}/menu/items/{item_id}", ownerOnly(s.handleUpdateItem))
-	mux.Handle("PUT /restaurants/{id}/menu/categories/order", ownerOnly(s.handleReorderCategories))
-	mux.Handle("PUT /restaurants/{id}/menu/categories/{category_id}/order", ownerOnly(s.handleReorderItems))
+	return []route{
+		{"GET /healthz", public(s.handleHealthz)},
+		{"GET /readyz", public(s.handleReadyz)},
+
+		{"POST /auth/signup", public(s.handleSignup)},
+		{"POST /auth/login", public(s.handleLogin)},
+		{"POST /auth/refresh", public(s.handleRefresh)},
+		{"POST /auth/logout", public(s.handleLogout)},
+		{"GET /me", loggedIn(s.handleMe)},
+		{"POST /me/profiles", loggedIn(s.handleAddProfile)},
+
+		// Restaurants: browsing is public, managing is for owners.
+		{"GET /restaurants", public(s.handleNearbyRestaurants)},
+		{"GET /restaurants/{id}", public(s.handleGetRestaurant)},
+		{"POST /restaurants", ownerOnly(s.handleCreateRestaurant)},
+		{"PATCH /restaurants/{id}", ownerOnly(s.handleUpdateRestaurant)},
+		{"GET /me/restaurants", ownerOnly(s.handleMyRestaurants)},
+
+		// Menus: anyone can read one, only the restaurant's owner can change it.
+		{"GET /restaurants/{id}/menu", public(s.handleMenu)},
+		{"GET /me/restaurants/{id}/menu", ownerOnly(s.handleOwnerMenu)},
+		{"POST /restaurants/{id}/menu/categories", ownerOnly(s.handleCreateCategory)},
+		{"PATCH /restaurants/{id}/menu/categories/{category_id}", ownerOnly(s.handleUpdateCategory)},
+		{"POST /restaurants/{id}/menu/items", ownerOnly(s.handleCreateItem)},
+		{"PATCH /restaurants/{id}/menu/items/{item_id}", ownerOnly(s.handleUpdateItem)},
+		{"PUT /restaurants/{id}/menu/categories/order", ownerOnly(s.handleReorderCategories)},
+		{"PUT /restaurants/{id}/menu/categories/{category_id}/order", ownerOnly(s.handleReorderItems)},
+	}
+}
+
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+	for _, rt := range s.routes() {
+		mux.Handle(rt.pattern, rt.handler)
+	}
 
 	// Outermost first: every request gets an ID, then is logged, and a panic
 	// anywhere inside still produces a logged 500.
