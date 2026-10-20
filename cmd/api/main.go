@@ -19,6 +19,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -51,13 +52,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// The cache is optional and "fails open": if Redis is missing or down, the
-	// API still works, reading from the database. So a failed ping is a warning,
-	// not a reason to stop.
+	// Redis is optional and "fails open": if it's missing or down, the API still
+	// works, reading menus from the database and logging in without rate limits.
+	// So a failed ping is a warning, not a reason to stop.
 	cache.UseLogger(logger)
 	var redisClient *redis.Client
 	if cfg.RedisURL == "" {
-		logger.Warn("REDIS_URL not set: running without a cache")
+		logger.Warn("REDIS_URL not set: running without a cache or rate limits")
 	} else {
 		redisClient, err = cache.Open(cfg.RedisURL)
 		if err != nil {
@@ -87,6 +88,7 @@ func run(logger *slog.Logger) error {
 			Restaurants: restaurants.NewStore(pool),
 			Menus:       menuStore,
 			MenuCache:   menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger),
+			Limiter:     ratelimit.New(redisClient, logger),
 			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,

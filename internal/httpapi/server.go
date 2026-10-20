@@ -10,6 +10,7 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -33,7 +34,9 @@ type Deps struct {
 	// MenuCache serves public menus. It works without Redis too (it then reads
 	// from the database), but must not be nil.
 	MenuCache *menus.Cache
-	Logger    *slog.Logger
+	// Limiter slows down repeated login and sign-up attempts. nil: no limits.
+	Limiter *ratelimit.Limiter
+	Logger  *slog.Logger
 }
 
 type Server struct {
@@ -45,6 +48,8 @@ type Server struct {
 	restaurants *restaurants.Store
 	menus       *menus.Store
 	menuCache   *menus.Cache
+	limiter     *ratelimit.Limiter
+	limits      limits
 	logger      *slog.Logger
 
 	dummyOnce sync.Once
@@ -52,6 +57,9 @@ type Server struct {
 }
 
 func NewServer(d Deps) *Server {
+	if d.Limiter == nil {
+		d.Limiter = ratelimit.New(nil, d.Logger)
+	}
 	return &Server{
 		db:          d.DB,
 		users:       d.Users,
@@ -61,6 +69,8 @@ func NewServer(d Deps) *Server {
 		restaurants: d.Restaurants,
 		menus:       d.Menus,
 		menuCache:   d.MenuCache,
+		limiter:     d.Limiter,
+		limits:      defaultLimits,
 		logger:      d.Logger,
 	}
 }
