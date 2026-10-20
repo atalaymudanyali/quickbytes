@@ -43,11 +43,13 @@ func loginFrom(t *testing.T, h http.Handler, ip, email, password string) *httpte
 	return do(t, h, req)
 }
 
-// newAccount signs up a user and returns their email. The password is "correct-password".
+// newAccount signs up a user and returns their email. The password is
+// "correct-password". It signs up from a fresh IP, so it never uses up a test's
+// sign-up limit (and counters left in Redis by earlier runs don't matter).
 func newAccount(t *testing.T, h http.Handler) string {
 	t.Helper()
 	email := testutil.UniqueEmail()
-	if rec := postJSON(t, h, "/auth/signup", signupBody(email, "correct-password")); rec.Code != http.StatusCreated {
+	if rec := signupFrom(t, h, uniqueIP(), email); rec.Code != http.StatusCreated {
 		t.Fatalf("signup failed: %d %s", rec.Code, rec.Body)
 	}
 	return email
@@ -136,4 +138,34 @@ func TestLoginCaseAndSpacesShareOneCounter(t *testing.T) {
 	wantStatus(t, loginFrom(t, h, ip, email, "guess"), http.StatusUnauthorized, "failure 1")
 	// Same account to the database, so it must be the same counter.
 	wantStatus(t, loginFrom(t, h, ip, " "+strings.ToUpper(email)+" ", "guess"), http.StatusTooManyRequests, "uppercased email")
+}
+
+func signupFrom(t *testing.T, h http.Handler, ip, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/auth/signup",
+		strings.NewReader(signupBody(email, "correct-password")))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip + ":51234"
+	return do(t, h, req)
+}
+
+func TestSignupLimitPerIP(t *testing.T) {
+	h := newLimitedHandler(t, func(l *limits) { l.signupIP.Limit = 2 })
+	ip := uniqueIP()
+
+	wantStatus(t, signupFrom(t, h, ip, testutil.UniqueEmail()), http.StatusCreated, "sign-up 1")
+	wantStatus(t, signupFrom(t, h, ip, testutil.UniqueEmail()), http.StatusCreated, "sign-up 2")
+	wantStatus(t, signupFrom(t, h, ip, testutil.UniqueEmail()), http.StatusTooManyRequests, "sign-up 3")
+	wantStatus(t, signupFrom(t, h, uniqueIP(), testutil.UniqueEmail()), http.StatusCreated, "another IP")
+}
+
+// Refused sign-ups are refused before the email is looked at, so they can't be
+// used to learn which emails are taken.
+func TestSignupLimitHidesTakenEmails(t *testing.T) {
+	h := newLimitedHandler(t, func(l *limits) { l.signupIP.Limit = 1 })
+	ip := uniqueIP()
+
+	wantStatus(t, signupFrom(t, h, ip, testutil.UniqueEmail()), http.StatusCreated, "sign-up 1")
+	taken := newAccount(t, h) // from another IP
+	wantStatus(t, signupFrom(t, h, ip, taken), http.StatusTooManyRequests, "taken email after the limit")
 }

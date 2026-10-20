@@ -24,6 +24,13 @@ type accountResponse struct {
 }
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	// Every attempt counts, before the body is even read, so being refused costs
+	// almost nothing: no hashing, and no "email_taken" answer to learn from.
+	if res := s.limiter.Hit(r.Context(), s.limits.signupIP, clientIP(r)); !res.Allowed {
+		writeTooManyRequests(w, r, res.RetryAfter)
+		return
+	}
+
 	var req signupRequest
 	if !decodeJSON(w, r, &req) {
 		return

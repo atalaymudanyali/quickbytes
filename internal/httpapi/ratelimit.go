@@ -24,12 +24,16 @@ type limits struct {
 	// (a botnet) guessing one account. High, so a stranger can't easily use it to
 	// block someone else's login.
 	loginEmail ratelimit.Rule
+	// Every sign-up from one IP: slows down checking many emails for
+	// "email_taken", and spending our CPU on password hashing.
+	signupIP ratelimit.Rule
 }
 
 var defaultLimits = limits{
 	loginIP:    ratelimit.Rule{Name: "login:ip", Limit: 20, Window: time.Minute},
 	loginPair:  ratelimit.Rule{Name: "login:email-ip", Limit: 5, Window: 15 * time.Minute},
 	loginEmail: ratelimit.Rule{Name: "login:email", Limit: 50, Window: time.Hour},
+	signupIP:   ratelimit.Rule{Name: "signup:ip", Limit: 10, Window: time.Hour},
 }
 
 // clientIP is the address the request came from. X-Forwarded-For is ignored on

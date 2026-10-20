@@ -85,7 +85,10 @@ paths:
       tags: [auth]
       operationId: signUp
       summary: Create an account and log in
-      description: The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+      description: |
+        The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+
+        Limit (answered with 429): 10 sign-ups per hour from one IP.
       requestBody:
         required: true
         content:
@@ -110,6 +113,7 @@ paths:
         "413": { $ref: "#/components/responses/BodyTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/login:
     post:
