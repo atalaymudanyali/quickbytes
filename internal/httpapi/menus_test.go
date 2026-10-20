@@ -2,13 +2,17 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
 // menuFixture is an owner with one restaurant, ready for menu calls.
@@ -21,7 +25,11 @@ type menuFixture struct {
 
 func newMenuFixture(t *testing.T) menuFixture {
 	t.Helper()
-	h := newAuthTestHandler(t)
+	return newMenuFixtureWith(t, newAuthTestHandler(t))
+}
+
+func newMenuFixtureWith(t *testing.T, h http.Handler) menuFixture {
+	t.Helper()
 	owner := ownerToken(t, h)
 	r := createRestaurant(t, h, owner, ciyaBody)
 	return menuFixture{
@@ -257,5 +265,59 @@ func TestPublicMenuIsCached(t *testing.T) {
 	if rec.Header().Get("X-Cache") != "MISS" || len(m.Categories[0].Items) != 1 {
 		t.Fatalf("after adding a dish: X-Cache = %q, %d dishes; want MISS and the new dish",
 			rec.Header().Get("X-Cache"), len(m.Categories[0].Items))
+	}
+}
+
+func TestPublicMenuETag(t *testing.T) {
+	cases := []struct {
+		name  string
+		redis func(t *testing.T) *redis.Client
+	}{
+		{"with redis", testutil.Redis}, // skipped when TEST_REDIS_URL isn't set
+		{"without redis", func(*testing.T) *redis.Client { return nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, h := newTestServerWithRedis(t, tc.redis(t))
+			f := newMenuFixtureWith(t, h)
+			get := func(ifNoneMatch string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodGet, f.base, nil)
+				if ifNoneMatch != "" {
+					req.Header.Set("If-None-Match", ifNoneMatch)
+				}
+				return do(t, f.h, req)
+			}
+
+			first := get("")
+			m := decode[menus.Menu](t, first, http.StatusOK)
+			etag := first.Header().Get("ETag")
+			if want := fmt.Sprintf(`"menu-%s-v%d"`, m.RestaurantID, m.Version); etag != want {
+				t.Fatalf("first read: ETag %s, want %s", etag, want)
+			}
+
+			// The app sends back what it has: unchanged menu, so 304 and no body.
+			// A second read (a cache HIT with Redis) must answer the same way.
+			for _, inm := range []string{etag, `"something-else", ` + etag, "W/" + etag, "*"} {
+				rec := get(inm)
+				if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+					t.Fatalf("If-None-Match %s: status %d, body %q; want 304 with no body", inm, rec.Code, rec.Body)
+				}
+				if rec.Header().Get("ETag") != etag || rec.Header().Get("X-Request-ID") == "" {
+					t.Fatalf("If-None-Match %s: 304 should carry ETag and X-Request-ID, got %v", inm, rec.Header())
+				}
+			}
+
+			// The owner changes the menu: the old tag is stale, so the full new menu comes back.
+			send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Çorbalar"}`)
+			rec := get(etag)
+			m = decode[menus.Menu](t, rec, http.StatusOK)
+			newTag := rec.Header().Get("ETag")
+			if newTag == etag || len(m.Categories) != 1 {
+				t.Fatalf("after a change: ETag %s (old %s), %d categories; want a new tag and the new section", newTag, etag, len(m.Categories))
+			}
+			if rec := get(newTag); rec.Code != http.StatusNotModified {
+				t.Fatalf("new ETag: status %d, want 304", rec.Code)
+			}
+		})
 	}
 }

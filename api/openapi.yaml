@@ -415,17 +415,34 @@ paths:
 
         Served from a cache when possible. A change to the menu is visible on the
         next read.
+
+        Every response carries an `ETag`. Send it back in `If-None-Match`: if the menu
+        hasn't changed, the answer is an empty `304 Not Modified` and the app keeps
+        using its stored copy.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The `ETag` of a menu the app already has (or several, comma-separated, or `*`).
+          schema: { type: string }
+          example: '"menu-01a14bab-224e-7468-8920-42d59bbb55ee-v7"'
       responses:
         "200":
           description: The menu.
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            ETag: { $ref: "#/components/headers/MenuETag" }
             X-Cache:
               description: "Where the menu came from: `HIT` (the cache), `MISS` (the database, now cached), `BYPASS` (the database; no cache available). For debugging; clients can ignore it."
               schema: { type: string, enum: [HIT, MISS, BYPASS] }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Menu" }
+        "304":
+          description: Not modified. `If-None-Match` names the current menu, so the app's copy is still right. No body.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            ETag: { $ref: "#/components/headers/MenuETag" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
 
   /me/restaurants/{id}/menu:
@@ -704,6 +721,9 @@ components:
     RequestID:
       description: A unique ID for this request, also written in the server's log. A client may send its own (letters, digits, `.`, `_`, `-`, up to 64 characters).
       schema: { type: string }
+    MenuETag:
+      description: A label for this exact version of the menu; it changes whenever the menu does. Send it back in `If-None-Match`.
+      schema: { type: string, example: '"menu-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
 
   parameters:
     RestaurantID:

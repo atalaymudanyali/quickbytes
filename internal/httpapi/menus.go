@@ -30,7 +30,38 @@ func (s *Server) handleMenu(w http.ResponseWriter, r *http.Request) {
 	// HIT, MISS or BYPASS: shows whether the cache answered. Handy in curl, tests
 	// and load tests, and harmless for clients to ignore.
 	w.Header().Set("X-Cache", string(result))
+
+	// The ETag is a short label for this exact menu. An app that already has it
+	// sends it back in If-None-Match; if the menu hasn't changed since, it gets
+	// an empty 304 Not Modified and keeps showing its own copy.
+	etag := menuETag(m)
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Values("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// menuETag builds the label from the menu's version, which goes up on every
+// change. ETags are quoted strings by HTTP's rules.
+func menuETag(m menus.Menu) string {
+	return fmt.Sprintf(`"menu-%s-v%d"`, m.RestaurantID, m.Version)
+}
+
+// etagMatches reports whether If-None-Match names etag. The header may list
+// several tags ("a", "b"), may be sent more than once, and "*" matches anything.
+// A W/ (weak) prefix is ignored, as HTTP says for If-None-Match.
+func etagMatches(ifNoneMatch []string, etag string) bool {
+	for _, header := range ifNoneMatch {
+		for _, tag := range strings.Split(header, ",") {
+			tag = strings.TrimPrefix(strings.TrimSpace(tag), "W/")
+			if tag == "*" || tag == etag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- The owner's view ---------------------------------------------------------
