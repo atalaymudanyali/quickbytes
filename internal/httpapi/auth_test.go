@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -25,11 +27,19 @@ func newAuthTestHandler(t *testing.T) http.Handler {
 // around their own handlers.
 func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
+	return newTestServerWithRedis(t, testutil.RedisIfConfigured(t))
+}
+
+// newTestServerWithRedis is newAuthTestServer with a chosen Redis (nil: no cache),
+// for tests that must cover both cases.
+func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Handler) {
+	t.Helper()
 	pool := testutil.DB(t)
 	tokens, err := auth.NewTokenIssuer([]byte(strings.Repeat("k", 32)), 15*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+	menuStore := menus.NewStore(pool)
 	srv := NewServer(Deps{
 		DB:          pool,
 		Users:       users.NewStore(pool),
@@ -37,7 +47,8 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 		Tokens:      tokens,
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
 		Restaurants: restaurants.NewStore(pool),
-		Menus:       menus.NewStore(pool),
+		Menus:       menuStore,
+		MenuCache:   menus.NewCache(menuStore, rdb, time.Minute, discardLogger()),
 		Logger:      discardLogger(),
 	})
 	return srv, validatedBySpec(t, srv.Routes())

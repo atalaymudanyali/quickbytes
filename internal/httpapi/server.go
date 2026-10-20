@@ -30,7 +30,10 @@ type Deps struct {
 	Refresh     *auth.RefreshStore
 	Restaurants *restaurants.Store
 	Menus       *menus.Store
-	Logger      *slog.Logger
+	// MenuCache serves public menus. It works without Redis too (it then reads
+	// from the database), but must not be nil.
+	MenuCache *menus.Cache
+	Logger    *slog.Logger
 }
 
 type Server struct {
@@ -41,6 +44,7 @@ type Server struct {
 	refresh     *auth.RefreshStore
 	restaurants *restaurants.Store
 	menus       *menus.Store
+	menuCache   *menus.Cache
 	logger      *slog.Logger
 
 	dummyOnce sync.Once
@@ -56,6 +60,7 @@ func NewServer(d Deps) *Server {
 		refresh:     d.Refresh,
 		restaurants: d.Restaurants,
 		menus:       d.Menus,
+		menuCache:   d.MenuCache,
 		logger:      d.Logger,
 	}
 }

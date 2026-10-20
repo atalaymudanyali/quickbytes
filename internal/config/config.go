@@ -9,8 +9,11 @@ import (
 )
 
 type Config struct {
-	HTTPAddr        string
-	DatabaseURL     string
+	HTTPAddr    string
+	DatabaseURL string
+	// RedisURL is optional: without it the API runs with no cache and reads
+	// everything from the database.
+	RedisURL        string
 	JWTSecret       []byte
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -21,6 +24,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		RedisURL:        os.Getenv("REDIS_URL"),
 		JWTSecret:       []byte(os.Getenv("JWT_SECRET")),
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,

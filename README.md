@@ -95,3 +95,19 @@ PostgreSQL 17 + PostGIS 3.5 in Docker):
 The last row is why the query filters twice: the index needs one fixed search
 distance, so a 10 km outer check (the maximum delivery radius) narrows the search
 before each restaurant's own radius is applied.
+
+### Public menu: Redis cache and ETag
+
+`make load-menu` builds an 80-dish menu (8 sections × 10 dishes) through the API,
+then has [k6](https://k6.io) send 50 users reading it nonstop for 30 seconds, three
+times (median of 3 runs, Apple M5 Pro, everything in Docker on one laptop):
+
+| Setup | Requests/s | p50 | p95 |
+|---|---|---|---|
+| No cache: every read goes to PostgreSQL (3 queries) | 8,475 | 5.78 ms | 7.12 ms |
+| Redis cache: 100% hits | 27,107 | 1.35 ms | 4.65 ms |
+| Redis cache + `If-None-Match`: empty `304 Not Modified` | **34,767** | **1.16 ms** | **3.17 ms** |
+
+The cache serves about 3.2× as many menus per second, and 304s about 4.1×, while
+also sparing the phone the download. k6 and the server share the same CPU here, so
+these numbers compare the three setups; they don't predict a real server's capacity.
