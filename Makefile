@@ -2,7 +2,7 @@ TEST_DATABASE_URL ?= postgres://quickbytes:quickbytes@localhost:5432/quickbytes_
 # Database 1 of the dev Redis, so tests don't mix with the app's cache in database 0.
 TEST_REDIS_URL ?= redis://localhost:6379/1
 
-.PHONY: up down db run test lint fmt bench-near-me swagger-ui
+.PHONY: up down db run test lint fmt bench-near-me load-menu swagger-ui
 
 up: ## Start everything (database + API) in Docker
 	docker compose up --build -d
@@ -28,6 +28,13 @@ fmt:
 
 bench-near-me: db ## Time the near-me query on 100k generated restaurants, without and with the index
 	docker compose exec -T postgres psql -q -U quickbytes -d quickbytes -f - < scripts/bench-near-me.sql
+
+load-menu: ## Load-test the public menu (50 users, 30 s each): no cache, cache, then 304s via ETag
+	API_REDIS_URL= docker compose up --build -d --wait api
+	docker compose run --rm k6 run -q -e MODE=nocache /scripts/load-menu.js
+	docker compose up -d --wait api
+	docker compose run --rm k6 run -q -e MODE=cache /scripts/load-menu.js
+	docker compose run --rm k6 run -q -e MODE=etag /scripts/load-menu.js
 
 swagger-ui: ## Download the pinned Swagger UI release (checksum-verified) into api/swaggerui
 	./scripts/update-swagger-ui.sh
