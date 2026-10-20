@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -230,5 +231,31 @@ func TestPublicMenu(t *testing.T) {
 		if rec := send(t, f.h, http.MethodGet, path, "", ""); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s: status = %d, want 404", path, rec.Code)
 		}
+	}
+}
+
+func TestPublicMenuIsCached(t *testing.T) {
+	if os.Getenv("TEST_REDIS_URL") == "" {
+		t.Skip("TEST_REDIS_URL not set")
+	}
+	f := newMenuFixture(t)
+	soups := decode[menus.Category](t, send(t, f.h, http.MethodPost, f.base+"/categories", f.owner, `{"name": "Çorbalar"}`), http.StatusCreated)
+
+	get := func() *httptest.ResponseRecorder { return send(t, f.h, http.MethodGet, f.base, "", "") }
+	if got := get().Header().Get("X-Cache"); got != "MISS" {
+		t.Fatalf("first read: X-Cache = %q, want MISS", got)
+	}
+	if got := get().Header().Get("X-Cache"); got != "HIT" {
+		t.Fatalf("second read: X-Cache = %q, want HIT", got)
+	}
+
+	// A change through the API drops the copy, and the next read shows it.
+	send(t, f.h, http.MethodPost, f.base+"/items", f.owner,
+		`{"category_id": "`+soups.ID.String()+`", "name": "Mercimek", "price_kurus": 9000}`)
+	rec := get()
+	m := decode[menus.Menu](t, rec, http.StatusOK)
+	if rec.Header().Get("X-Cache") != "MISS" || len(m.Categories[0].Items) != 1 {
+		t.Fatalf("after adding a dish: X-Cache = %q, %d dishes; want MISS and the new dish",
+			rec.Header().Get("X-Cache"), len(m.Categories[0].Items))
 	}
 }

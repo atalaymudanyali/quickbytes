@@ -51,6 +51,16 @@ func UniqueEmail() string {
 	return "test-" + hex.EncodeToString(b) + "@example.com"
 }
 
+// RedisIfConfigured is like Redis, but returns nil instead of skipping when
+// TEST_REDIS_URL isn't set, for code that works with or without a cache.
+func RedisIfConfigured(t *testing.T) *redis.Client {
+	t.Helper()
+	if os.Getenv("TEST_REDIS_URL") == "" {
+		return nil
+	}
+	return Redis(t)
+}
+
 // Redis connects to the test Redis. The test is skipped when TEST_REDIS_URL isn't
 // set. Tests share one Redis, so they should use keys no other test uses.
 func Redis(t *testing.T) *redis.Client {

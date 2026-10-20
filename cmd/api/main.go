@@ -69,6 +69,8 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
+	menuStore := menus.NewStore(pool)
+
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
 		return err
@@ -83,8 +85,8 @@ func run(logger *slog.Logger) error {
 			Tokens:      tokens,
 			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
 			Restaurants: restaurants.NewStore(pool),
-			Menus:       menus.NewStore(pool),
-			Redis:       redisClient,
+			Menus:       menuStore,
+			MenuCache:   menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger),
 			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,

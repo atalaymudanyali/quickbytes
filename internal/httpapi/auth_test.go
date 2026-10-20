@@ -30,6 +30,7 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	menuStore := menus.NewStore(pool)
 	srv := NewServer(Deps{
 		DB:          pool,
 		Users:       users.NewStore(pool),
@@ -37,7 +38,8 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 		Tokens:      tokens,
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
 		Restaurants: restaurants.NewStore(pool),
-		Menus:       menus.NewStore(pool),
+		Menus:       menuStore,
+		MenuCache:   menus.NewCache(menuStore, testutil.RedisIfConfigured(t), time.Minute, discardLogger()),
 		Logger:      discardLogger(),
 	})
 	return srv, validatedBySpec(t, srv.Routes())

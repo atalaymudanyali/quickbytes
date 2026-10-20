@@ -412,11 +412,17 @@ paths:
         Sections and dishes in the owner's order. Sold-out dishes are included with
         `"available": false` (show them greyed out); archived sections and dishes are left
         out. No login needed.
+
+        Served from a cache when possible. A change to the menu is visible on the
+        next read.
       responses:
         "200":
           description: The menu.
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            X-Cache:
+              description: "Where the menu came from: `HIT` (the cache), `MISS` (the database, now cached), `BYPASS` (the database; no cache available). For debugging; clients can ignore it."
+              schema: { type: string, enum: [HIT, MISS, BYPASS] }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Menu" }

@@ -70,6 +70,9 @@ var (
 
 type Store struct {
 	pool *pgxpool.Pool
+	// onChange, if set, is called after every successful menu change, once the
+	// transaction is committed. The cache uses it to drop its outdated copy.
+	onChange func(ctx context.Context, restaurantID uuid.UUID, version int64)
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
@@ -85,20 +88,30 @@ func NewStore(pool *pgxpool.Pool) *Store {
 //     to the same menu run one after the other, never interleaved. That makes
 //     "check, then act" steps inside fn safe (e.g. "is this category still
 //     active? then add the item to it").
+//
+// After the transaction commits, onChange (if set) hears about the new version.
+// Only after: telling the cache before the commit could let a reader cache the
+// old menu again in between.
 func (s *Store) change(ctx context.Context, restaurantID, ownerProfileID uuid.UUID, fn func(pgx.Tx) error) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `
+	var version int64
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
 			UPDATE restaurants SET menu_version = menu_version + 1
-			WHERE id = $1 AND owner_profile_id = $2`,
-			restaurantID, ownerProfileID)
+			WHERE id = $1 AND owner_profile_id = $2
+			RETURNING menu_version`,
+			restaurantID, ownerProfileID).Scan(&version)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRestaurantNotFound
+		}
 		if err != nil {
 			return fmt.Errorf("bump menu version: %w", err)
 		}
-		if tag.RowsAffected() == 0 {
-			return ErrRestaurantNotFound
-		}
 		return fn(tx)
 	})
+	if err == nil && s.onChange != nil {
+		s.onChange(ctx, restaurantID, version)
+	}
+	return err
 }
 
 // --- Categories ---------------------------------------------------------------

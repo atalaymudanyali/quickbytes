@@ -22,11 +22,14 @@ func (s *Server) handleMenu(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	m, err := s.menus.Menu(r.Context(), restaurantID, menus.View{})
+	m, result, err := s.menuCache.PublicMenu(r.Context(), restaurantID)
 	if err != nil {
 		s.writeMenuError(w, r, err)
 		return
 	}
+	// HIT, MISS or BYPASS: shows whether the cache answered. Handy in curl, tests
+	// and load tests, and harmless for clients to ignore.
+	w.Header().Set("X-Cache", string(result))
 	writeJSON(w, http.StatusOK, m)
 }
 
