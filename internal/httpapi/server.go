@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -30,7 +32,9 @@ type Deps struct {
 	Refresh     *auth.RefreshStore
 	Restaurants *restaurants.Store
 	Menus       *menus.Store
-	Logger      *slog.Logger
+	// Redis is the cache. nil means no cache: everything is read from the database.
+	Redis  *redis.Client
+	Logger *slog.Logger
 }
 
 type Server struct {
@@ -41,6 +45,7 @@ type Server struct {
 	refresh     *auth.RefreshStore
 	restaurants *restaurants.Store
 	menus       *menus.Store
+	redis       *redis.Client
 	logger      *slog.Logger
 
 	dummyOnce sync.Once
@@ -56,6 +61,7 @@ func NewServer(d Deps) *Server {
 		refresh:     d.Refresh,
 		restaurants: d.Restaurants,
 		menus:       d.Menus,
+		redis:       d.Redis,
 		logger:      d.Logger,
 	}
 }

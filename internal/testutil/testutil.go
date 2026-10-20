@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
+	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 )
 
@@ -47,4 +49,23 @@ func UniqueEmail() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return "test-" + hex.EncodeToString(b) + "@example.com"
+}
+
+// Redis connects to the test Redis. The test is skipped when TEST_REDIS_URL isn't
+// set. Tests share one Redis, so they should use keys no other test uses.
+func Redis(t *testing.T) *redis.Client {
+	t.Helper()
+	url := os.Getenv("TEST_REDIS_URL")
+	if url == "" {
+		t.Skip("TEST_REDIS_URL not set")
+	}
+	c, err := cache.Open(url)
+	if err != nil {
+		t.Fatalf("open test redis: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if err := cache.Ping(context.Background(), c); err != nil {
+		t.Fatalf("test redis not reachable: %v", err)
+	}
+	return c
 }

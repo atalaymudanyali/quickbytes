@@ -11,7 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
@@ -48,6 +51,24 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// The cache is optional and "fails open": if Redis is missing or down, the
+	// API still works, reading from the database. So a failed ping is a warning,
+	// not a reason to stop.
+	cache.UseLogger(logger)
+	var redisClient *redis.Client
+	if cfg.RedisURL == "" {
+		logger.Warn("REDIS_URL not set: running without a cache")
+	} else {
+		redisClient, err = cache.Open(cfg.RedisURL)
+		if err != nil {
+			return err
+		}
+		defer redisClient.Close()
+		if err := cache.Ping(ctx, redisClient); err != nil {
+			logger.Warn("redis not reachable at startup; reading from the database until it is", "err", err)
+		}
+	}
+
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
 		return err
@@ -63,6 +84,7 @@ func run(logger *slog.Logger) error {
 			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
 			Restaurants: restaurants.NewStore(pool),
 			Menus:       menus.NewStore(pool),
+			Redis:       redisClient,
 			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
