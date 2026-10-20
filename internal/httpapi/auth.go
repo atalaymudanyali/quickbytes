@@ -24,6 +24,13 @@ type accountResponse struct {
 }
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	// Every attempt counts, before the body is even read, so being refused costs
+	// almost nothing: no hashing, and no "email_taken" answer to learn from.
+	if res := s.limiter.Hit(r.Context(), s.limits.signupIP, clientIP(r)); !res.Allowed {
+		writeTooManyRequests(w, r, res.RetryAfter)
+		return
+	}
+
 	var req signupRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -89,18 +96,46 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	ip := clientIP(r)
+	// Every attempt from this IP counts, even one with a broken body.
+	if res := s.limiter.Hit(ctx, s.limits.loginIP, ip); !res.Allowed {
+		writeTooManyRequests(w, r, res.RetryAfter)
+		return
+	}
+
 	var req loginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	email := emailKey(req.Email)
+	pair := email + ":" + ip
 
-	user, err := s.users.GetByEmail(r.Context(), strings.TrimSpace(req.Email))
+	// The two email limits count only failures, so look before trying, and count
+	// after a failure. This happens before any password hashing, so a blocked
+	// attempt costs almost nothing. The counters are the same whether or not the
+	// email has an account, so a 429 reveals nothing about which emails exist.
+	if res := s.limiter.Check(ctx, s.limits.loginPair, pair); !res.Allowed {
+		writeTooManyRequests(w, r, res.RetryAfter)
+		return
+	}
+	if res := s.limiter.Check(ctx, s.limits.loginEmail, email); !res.Allowed {
+		writeTooManyRequests(w, r, res.RetryAfter)
+		return
+	}
+	failed := func() {
+		s.limiter.Hit(ctx, s.limits.loginPair, pair)
+		s.limiter.Hit(ctx, s.limits.loginEmail, email)
+		writeInvalidCredentials(w, r)
+	}
+
+	user, err := s.users.GetByEmail(ctx, strings.TrimSpace(req.Email))
 	if errors.Is(err, users.ErrNotFound) {
 		// Hash anyway, so "no such email" takes as long as "wrong password". If it
 		// answered faster, an attacker could time responses to learn which emails
 		// have accounts.
 		_, _ = s.hasher.Verify(req.Password, s.dummyHash())
-		writeInvalidCredentials(w, r)
+		failed()
 		return
 	}
 	if err != nil {
@@ -114,16 +149,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		writeInvalidCredentials(w, r)
+		failed()
 		return
 	}
+	// The right password: forget this device's earlier typos. The any-IP counter
+	// is kept, so the owner logging in doesn't hand an attacker elsewhere a fresh
+	// set of guesses.
+	s.limiter.Reset(ctx, s.limits.loginPair, pair)
 
-	profiles, err := s.users.ListProfiles(r.Context(), user.ID)
+	profiles, err := s.users.ListProfiles(ctx, user.ID)
 	if err != nil {
 		s.writeInternalError(w, r, err)
 		return
 	}
-	tokens, err := s.startSession(r.Context(), user.ID, profiles)
+	tokens, err := s.startSession(ctx, user.ID, profiles)
 	if err != nil {
 		s.writeInternalError(w, r, err)
 		return

@@ -85,7 +85,10 @@ paths:
       tags: [auth]
       operationId: signUp
       summary: Create an account and log in
-      description: The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+      description: |
+        The new user gets a customer profile, and the response includes a token pair, so signing up also logs in.
+
+        Limit (answered with 429): 10 sign-ups per hour from one IP.
       requestBody:
         required: true
         content:
@@ -110,6 +113,7 @@ paths:
         "413": { $ref: "#/components/responses/BodyTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/login:
     post:
@@ -134,6 +138,10 @@ paths:
           description: |
             Email or password is incorrect (code `invalid_credentials`). An unknown email
             and a wrong password give the same answer, in the same time.
+
+            Limits (answered with 429): 20 attempts per minute from one IP; 5 failures
+            per 15 minutes for one email from one IP (a successful login resets this);
+            50 failures per hour for one email from any IP.
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
           content:
@@ -141,6 +149,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/refresh:
     post:
@@ -721,6 +730,9 @@ components:
     RequestID:
       description: A unique ID for this request, also written in the server's log. A client may send its own (letters, digits, `.`, `_`, `-`, up to 64 characters).
       schema: { type: string }
+    RetryAfter:
+      description: How many seconds to wait before trying again.
+      schema: { type: integer, minimum: 1, example: 742 }
     MenuETag:
       description: A label for this exact version of the menu; it changes whenever the menu does. Send it back in `If-None-Match`.
       schema: { type: string, example: '"menu-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
@@ -781,6 +793,19 @@ components:
               fields:
                 email: must be a valid email address
                 password: must be 8 to 128 characters
+              request_id: 0c045729a68d831e5cc32825
+    TooManyRequests:
+      description: Too many attempts (code `rate_limited`). Wait `Retry-After` seconds, then try again. Limits slow attempts down and reset by themselves; they never lock an account.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: rate_limited
+              message: too many attempts, try again later
               request_id: 0c045729a68d831e5cc32825
     Unauthenticated:
       description: No valid access token was sent (code `unauthenticated`). Log in or refresh.
