@@ -8,7 +8,7 @@ DEV_REDIS_URL ?= redis://localhost:6379/0
 # local database, so these accounts never exist anywhere real.
 SEED_PASSWORD ?= quickbytes-demo
 
-.PHONY: up down db run test lint fmt seed bench-near-me load-menu swagger-ui
+.PHONY: up down db run test lint fmt seed seed-reset bench-near-me load-menu swagger-ui
 
 up: ## Start everything (database + API) in Docker
 	docker compose up --build -d
@@ -34,6 +34,9 @@ fmt:
 
 seed: db ## Fill the dev database with Istanbul demo data (running it again adds only what's missing)
 	DATABASE_URL="$(DEV_DATABASE_URL)" REDIS_URL="$(DEV_REDIS_URL)" SEED_PASSWORD="$(SEED_PASSWORD)" go run ./cmd/seed
+
+seed-reset: db ## Delete only the demo data (accounts on @demo.quickbytes.test and what they own), then seed it fresh
+	DATABASE_URL="$(DEV_DATABASE_URL)" REDIS_URL="$(DEV_REDIS_URL)" SEED_PASSWORD="$(SEED_PASSWORD)" go run ./cmd/seed -reset
 
 bench-near-me: db ## Time the near-me query on 100k generated restaurants, without and with the index
 	docker compose exec -T postgres psql -q -U quickbytes -d quickbytes -f - < scripts/bench-near-me.sql

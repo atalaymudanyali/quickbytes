@@ -1,9 +1,11 @@
 // Command seed fills the local dev database with the Istanbul demo data. Run it
-// with `make seed`. Running it again only adds what's missing.
+// with `make seed`. Running it again only adds what's missing. With -reset
+// (`make seed-reset`) it first deletes all demo data, then seeds it fresh.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,13 +23,15 @@ import (
 )
 
 func main() {
-	if err := run(context.Background(), os.Stdout); err != nil {
+	reset := flag.Bool("reset", false, "delete all demo accounts (and their restaurants and menus) before seeding")
+	flag.Parse()
+	if err := run(context.Background(), os.Stdout, *reset); err != nil {
 		fmt.Fprintln(os.Stderr, "seed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, out io.Writer) error {
+func run(ctx context.Context, out io.Writer, reset bool) error {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
@@ -68,7 +72,15 @@ func run(ctx context.Context, out io.Writer) error {
 		defer redisClient.Close()
 	}
 	menuStore := menus.NewStore(pool)
-	menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger)
+	menuCache := menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger)
+
+	if reset {
+		n, err := seed.Reset(ctx, pool, menuCache)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Deleted %d demo accounts, with their restaurants and menus.\n\n", n)
+	}
 
 	s := &seed.Seeder{
 		Users:       users.NewStore(pool),

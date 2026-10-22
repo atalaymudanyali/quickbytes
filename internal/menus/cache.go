@@ -130,6 +130,24 @@ func (c *Cache) storeIfCurrent(ctx context.Context, m Menu) {
 	}
 }
 
+// Forget drops everything cached for these restaurants, once they've been
+// deleted. Without it, a copy would keep serving the menu of a restaurant that
+// no longer exists until its TTL ran out. Like invalidate, a Redis failure is
+// only a warning: the copies still expire on their own.
+func (c *Cache) Forget(ctx context.Context, restaurantIDs ...uuid.UUID) {
+	if c.redis == nil || len(restaurantIDs) == 0 {
+		return
+	}
+	keys := make([]string, 0, 2*len(restaurantIDs))
+	for _, id := range restaurantIDs {
+		keys = append(keys, menuKey(id), versionKey(id))
+	}
+	if err := c.redis.Del(ctx, keys...).Err(); err != nil {
+		c.logger.WarnContext(ctx, "menu cache: could not drop deleted restaurants; they expire on their own",
+			"restaurants", len(restaurantIDs), "err", err)
+	}
+}
+
 // invalidate is called by the store after each committed menu change.
 func (c *Cache) invalidate(ctx context.Context, restaurantID uuid.UUID, version int64) {
 	if c.redis == nil {
