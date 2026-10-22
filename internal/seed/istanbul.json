@@ -1,0 +1,317 @@
+{
+  "accounts": [
+    { "email": "musteri@demo.quickbytes.test", "full_name": "Ayşe Yılmaz", "extra_roles": [] },
+    { "email": "kurye@demo.quickbytes.test", "full_name": "Mehmet Kaya", "extra_roles": ["driver"] },
+    { "email": "demo@demo.quickbytes.test", "full_name": "Deniz Demir", "extra_roles": ["restaurant", "driver"] },
+    { "email": "hasan@demo.quickbytes.test", "full_name": "Hasan Çelik", "extra_roles": ["restaurant"] },
+    { "email": "elif@demo.quickbytes.test", "full_name": "Elif Şahin", "extra_roles": ["restaurant"] },
+    { "email": "murat@demo.quickbytes.test", "full_name": "Murat Öztürk", "extra_roles": ["restaurant"] },
+    { "email": "zeynep@demo.quickbytes.test", "full_name": "Zeynep Arslan", "extra_roles": ["restaurant"] }
+  ],
+  "restaurants": [
+    {
+      "owner": "hasan@demo.quickbytes.test",
+      "name": "Hasan Usta Kebap Kadıköy",
+      "address": "Caferağa Mh., Moda Cd. No:12, Kadıköy",
+      "lat": 40.9875, "lng": 29.0262,
+      "delivery_radius_m": 3000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Çorbalar", "items": [
+          { "name": "Mercimek Çorbası", "description": "Kırmızı mercimek, limon ve kızarmış ekmekle", "price_kurus": 12000 },
+          { "name": "Ezogelin Çorbası", "description": "Bulgur ve naneli, acılı", "price_kurus": 12000 }
+        ]},
+        { "name": "Kebaplar", "items": [
+          { "name": "Adana Kebap", "description": "Acılı zırh kıyması, lavaş, közlenmiş biber ve domates", "price_kurus": 45000 },
+          { "name": "Urfa Kebap", "description": "Acısız zırh kıyması, lavaş ve soğan salatası", "price_kurus": 45000 },
+          { "name": "Kuzu Şiş", "description": "Marine kuzu but, bulgur pilavı ile", "price_kurus": 52000 },
+          { "name": "Beyti Sarma", "description": "Lavaşa sarılı kebap, yoğurt ve tereyağlı sos", "price_kurus": 49000 }
+        ]},
+        { "name": "Lahmacun ve Pide", "items": [
+          { "name": "Lahmacun", "description": "İnce hamur, kıymalı harç, maydanoz ve limon", "price_kurus": 15000 },
+          { "name": "Kıymalı Pide", "description": "Taş fırında", "price_kurus": 28000 }
+        ]},
+        { "name": "Tatlılar", "items": [
+          { "name": "Künefe", "description": "Hatay peyniri, şerbet ve Antep fıstığı", "price_kurus": 22000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Ayran", "description": "Yayık ayranı, 300 ml", "price_kurus": 4000 },
+          { "name": "Şalgam", "description": "Acılı, 330 ml", "price_kurus": 4500 }
+        ]}
+      ]
+    },
+    {
+      "owner": "hasan@demo.quickbytes.test",
+      "name": "Hasan Usta Kebap Beşiktaş",
+      "address": "Sinanpaşa Mh., Ortabahçe Cd. No:8, Beşiktaş",
+      "lat": 41.0430, "lng": 29.0060,
+      "delivery_radius_m": 3000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Kebaplar", "items": [
+          { "name": "Adana Kebap", "description": "Acılı zırh kıyması, lavaş, közlenmiş biber ve domates", "price_kurus": 46000 },
+          { "name": "Urfa Kebap", "description": "Acısız zırh kıyması, lavaş ve soğan salatası", "price_kurus": 46000 },
+          { "name": "Tavuk Şiş", "description": "Yoğurtlu marine tavuk göğsü, pilav ile", "price_kurus": 36000 },
+          { "name": "İskender", "description": "Döner, tereyağı, domates sosu ve yoğurt", "price_kurus": 48000 }
+        ]},
+        { "name": "Lahmacun ve Pide", "items": [
+          { "name": "Lahmacun", "description": "İnce hamur, kıymalı harç, maydanoz ve limon", "price_kurus": 16000 },
+          { "name": "Kaşarlı Pide", "description": "Taş fırında, bol kaşarlı", "price_kurus": 26000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Ayran", "description": "Yayık ayranı, 300 ml", "price_kurus": 4000 },
+          { "name": "Çay", "description": "İnce belli bardakta", "price_kurus": 2500 }
+        ]}
+      ]
+    },
+    {
+      "owner": "elif@demo.quickbytes.test",
+      "name": "Elif'in Mutfağı",
+      "address": "Caferağa Mh., Dr. Esat Işık Cd. No:30, Moda, Kadıköy",
+      "lat": 40.9832, "lng": 29.0268,
+      "delivery_radius_m": 2500,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Ev Yemekleri", "items": [
+          { "name": "Kuru Fasulye", "description": "Tereyağlı, pilav ve turşu ile", "price_kurus": 22000 },
+          { "name": "Karnıyarık", "description": "Kıymalı patlıcan, pilav ile", "price_kurus": 28000 },
+          { "name": "İzmir Köfte", "description": "Fırında patates ve domates soslu", "price_kurus": 30000 },
+          { "name": "Tavuk Sote", "description": "Biberli, bulgur pilavı ile", "price_kurus": 26000 }
+        ]},
+        { "name": "Zeytinyağlılar", "items": [
+          { "name": "Zeytinyağlı Enginar", "description": "Bezelye ve havuçla", "price_kurus": 18000 },
+          { "name": "Yaprak Sarma", "description": "Zeytinyağlı, limonlu", "price_kurus": 16000 }
+        ]},
+        { "name": "Tatlılar", "items": [
+          { "name": "Sütlaç", "description": "Fırında, tarçınlı", "price_kurus": 12000 },
+          { "name": "Kabak Tatlısı", "description": "Tahin ve cevizli", "price_kurus": 14000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "murat@demo.quickbytes.test",
+      "name": "Bahariye Lahmacun",
+      "address": "Osmanağa Mh., Bahariye Cd. No:45, Kadıköy",
+      "lat": 40.9888, "lng": 29.0302,
+      "delivery_radius_m": 2000,
+      "accepting_orders": false,
+      "categories": [
+        { "name": "Lahmacun", "items": [
+          { "name": "Lahmacun", "description": "Klasik, kıymalı", "price_kurus": 14000 },
+          { "name": "Acılı Lahmacun", "description": "Bol isotlu", "price_kurus": 15000 },
+          { "name": "Fındık Lahmacun", "description": "Küçük boy, 3 adet", "price_kurus": 18000 }
+        ]},
+        { "name": "Dürümler", "items": [
+          { "name": "Tavuk Dürüm", "description": "Lavaşta, közlenmiş biberli", "price_kurus": 20000 },
+          { "name": "Et Dürüm", "description": "Lavaşta, soğan ve sumaklı", "price_kurus": 28000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Ayran", "description": "300 ml", "price_kurus": 3500 },
+          { "name": "Şalgam", "description": "330 ml", "price_kurus": 4000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "zeynep@demo.quickbytes.test",
+      "name": "Fenerbahçe Dondurma",
+      "address": "Fenerbahçe Mh., Fener Kalamış Cd. No:70, Kadıköy",
+      "lat": 40.9700, "lng": 29.0420,
+      "delivery_radius_m": 1000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Dondurmalar", "items": [
+          { "name": "Maraş Dondurması", "description": "Keçi sütü ve salep, bir top", "price_kurus": 6000 },
+          { "name": "Fıstıklı Dondurma", "description": "Antep fıstıklı, bir top", "price_kurus": 7000 },
+          { "name": "Çikolatalı Dondurma", "description": "Bitter çikolatalı, bir top", "price_kurus": 6000 },
+          { "name": "Dondurmalı İrmik Helvası", "description": "Sıcak helva, bir top kaymaklı ile", "price_kurus": 16000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Limonata", "description": "Ev yapımı, 400 ml", "price_kurus": 7500 },
+          { "name": "Türk Kahvesi", "description": "Lokum ile", "price_kurus": 9000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "elif@demo.quickbytes.test",
+      "name": "Üsküdar Balıkçısı",
+      "address": "Mimar Sinan Mh., Hakimiyet-i Milliye Cd. No:5, Üsküdar",
+      "lat": 41.0262, "lng": 29.0150,
+      "delivery_radius_m": 3000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Balıklar", "items": [
+          { "name": "Levrek Izgara", "description": "Roka ve soğan salatası ile", "price_kurus": 65000 },
+          { "name": "Çipura Izgara", "description": "Roka ve soğan salatası ile", "price_kurus": 62000 },
+          { "name": "Hamsi Tava", "description": "Mısır unlu, mevsiminde", "price_kurus": 38000 },
+          { "name": "Balık Ekmek", "description": "Uskumru, marul ve soğan", "price_kurus": 20000 }
+        ]},
+        { "name": "Mezeler", "items": [
+          { "name": "Haydari", "description": "Süzme yoğurt, nane ve sarımsak", "price_kurus": 12000 },
+          { "name": "Atom", "description": "Kuru biberli acı yoğurt", "price_kurus": 13000 },
+          { "name": "Deniz Börülcesi", "description": "Zeytinyağı ve limonlu", "price_kurus": 15000 }
+        ]},
+        { "name": "Salatalar", "items": [
+          { "name": "Çoban Salata", "description": "Domates, salatalık, biber ve soğan", "price_kurus": 14000 },
+          { "name": "Roka Salatası", "description": "Parmesan ve nar ekşili", "price_kurus": 15000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "demo@demo.quickbytes.test",
+      "name": "Kuzguncuk Fırını",
+      "address": "Kuzguncuk Mh., İcadiye Cd. No:22, Üsküdar",
+      "lat": 41.0365, "lng": 29.0310,
+      "delivery_radius_m": 2000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Börekler", "items": [
+          { "name": "Su Böreği", "description": "Peynirli, bir dilim", "price_kurus": 9000 },
+          { "name": "Kol Böreği", "description": "Patatesli, bir dilim", "price_kurus": 8000 },
+          { "name": "Kıymalı Börek", "description": "Bir dilim", "price_kurus": 10000 }
+        ]},
+        { "name": "Fırından", "items": [
+          { "name": "Simit", "description": "Susamlı, sabah fırından", "price_kurus": 2500 },
+          { "name": "Poğaça", "description": "Peynirli veya zeytinli", "price_kurus": 3000 },
+          { "name": "Açma", "description": "Tereyağlı", "price_kurus": 3000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Çay", "description": "Demlik çay, bardak", "price_kurus": 2000 },
+          { "name": "Taze Portakal Suyu", "description": "300 ml", "price_kurus": 9000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "zeynep@demo.quickbytes.test",
+      "name": "Beşiktaş Kahvaltı Evi",
+      "address": "Sinanpaşa Mh., Şair Nedim Cd. No:3, Beşiktaş",
+      "lat": 41.0440, "lng": 29.0030,
+      "delivery_radius_m": 2500,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Kahvaltılar", "items": [
+          { "name": "Serpme Kahvaltı (2 kişilik)", "description": "Peynirler, zeytin, bal-kaymak, reçeller, sigara böreği, sınırsız çay", "price_kurus": 110000 },
+          { "name": "Kahvaltı Tabağı", "description": "Tek kişilik, haşlanmış yumurta ile", "price_kurus": 45000 }
+        ]},
+        { "name": "Yumurtalar", "items": [
+          { "name": "Menemen", "description": "Domates, biber ve yumurta", "price_kurus": 22000 },
+          { "name": "Sucuklu Yumurta", "description": "Sahanda", "price_kurus": 26000 },
+          { "name": "Çılbır", "description": "Sarımsaklı yoğurt ve kırmızı biberli tereyağı", "price_kurus": 24000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Çay", "description": "Bardak", "price_kurus": 3000 },
+          { "name": "Türk Kahvesi", "description": "Lokum ile", "price_kurus": 9000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "zeynep@demo.quickbytes.test",
+      "name": "Nişantaşı Bistro",
+      "address": "Teşvikiye Mh., Abdi İpekçi Cd. No:18, Şişli",
+      "lat": 41.0510, "lng": 28.9940,
+      "delivery_radius_m": 2500,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Başlangıçlar", "items": [
+          { "name": "Humus", "description": "Tereyağlı pastırma ile", "price_kurus": 28000 },
+          { "name": "Patates Kızartması", "description": "Trüf yağlı", "price_kurus": 22000 }
+        ]},
+        { "name": "Ana Yemekler", "items": [
+          { "name": "Izgara Köfte", "description": "Kasap köfte, patates püresi ile", "price_kurus": 54000 },
+          { "name": "Tavuk Şnitzel", "description": "Yeşil salata ile", "price_kurus": 48000 },
+          { "name": "Mantarlı Risotto", "description": "Parmesan ile", "price_kurus": 52000 },
+          { "name": "Burger", "description": "180 g dana, cheddar, karamelize soğan", "price_kurus": 56000 }
+        ]},
+        { "name": "Tatlılar", "items": [
+          { "name": "Sufle", "description": "Akışkan bitter çikolata, dondurma ile", "price_kurus": 30000 },
+          { "name": "Cheesecake", "description": "Frambuaz soslu", "price_kurus": 28000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "zeynep@demo.quickbytes.test",
+      "name": "Şişli Mantı Evi",
+      "address": "Halaskargazi Cd. No:210, Şişli",
+      "lat": 41.0600, "lng": 28.9870,
+      "delivery_radius_m": 3000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Mantılar", "items": [
+          { "name": "Kayseri Mantısı", "description": "Sarımsaklı yoğurt ve tereyağlı sos", "price_kurus": 32000 },
+          { "name": "Kızarmış Mantı", "description": "Çıtır, yoğurtlu", "price_kurus": 34000 },
+          { "name": "Hingel", "description": "Patatesli, Kafkas usulü", "price_kurus": 30000, "available": false }
+        ]},
+        { "name": "Gözlemeler", "items": [
+          { "name": "Peynirli Gözleme", "description": "Sacda", "price_kurus": 18000 },
+          { "name": "Patatesli Gözleme", "description": "Sacda", "price_kurus": 17000 },
+          { "name": "Ispanaklı Gözleme", "description": "Sacda, lor peynirli", "price_kurus": 18000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Ayran", "description": "300 ml", "price_kurus": 4000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "murat@demo.quickbytes.test",
+      "name": "Divanyolu Köfte",
+      "address": "Alemdar Mh., Divanyolu Cd. No:14, Fatih",
+      "lat": 41.0082, "lng": 28.9750,
+      "delivery_radius_m": 2000,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Köfteler", "items": [
+          { "name": "Izgara Köfte", "description": "Piyaz ile", "price_kurus": 38000 },
+          { "name": "Yarım Ekmek Köfte", "description": "Domates ve soğanlı", "price_kurus": 22000 }
+        ]},
+        { "name": "Yanında", "items": [
+          { "name": "Piyaz", "description": "Fasulye, soğan ve tahin soslu", "price_kurus": 12000 },
+          { "name": "Çoban Salata", "description": "Domates, salatalık, biber ve soğan", "price_kurus": 11000 }
+        ]},
+        { "name": "Tatlılar", "items": [
+          { "name": "İrmik Helvası", "description": "Sıcak, dondurmasız", "price_kurus": 12000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "murat@demo.quickbytes.test",
+      "name": "Fatih Çorba Salonu",
+      "address": "Kızıltaş Mh., Macar Kardeşler Cd. No:40, Fatih",
+      "lat": 41.0175, "lng": 28.9440,
+      "delivery_radius_m": 3500,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Çorbalar", "items": [
+          { "name": "Kelle Paça", "description": "Sarımsaklı sirke ile", "price_kurus": 22000 },
+          { "name": "İşkembe Çorbası", "description": "Sarımsaklı sirke ile", "price_kurus": 20000 },
+          { "name": "Mercimek Çorbası", "description": "Limon ve kızarmış ekmekle", "price_kurus": 10000 },
+          { "name": "Tavuk Suyu Çorbası", "description": "Şehriyeli, limonlu", "price_kurus": 11000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Çay", "description": "Bardak", "price_kurus": 2000 }
+        ]}
+      ]
+    },
+    {
+      "owner": "murat@demo.quickbytes.test",
+      "name": "Karaköy Pide Salonu",
+      "address": "Kemankeş Karamustafa Paşa Mh., Necatibey Cd. No:9, Beyoğlu",
+      "lat": 41.0240, "lng": 28.9770,
+      "delivery_radius_m": 2500,
+      "accepting_orders": true,
+      "categories": [
+        { "name": "Pideler", "items": [
+          { "name": "Kıymalı Pide", "description": "Taş fırında", "price_kurus": 28000 },
+          { "name": "Kuşbaşılı Pide", "description": "Dana kuşbaşı, taş fırında", "price_kurus": 34000 },
+          { "name": "Karışık Pide", "description": "Kıyma, sucuk ve kaşar", "price_kurus": 36000 },
+          { "name": "Yumurtalı Kaşarlı Pide", "description": "Taş fırında", "price_kurus": 26000 }
+        ]},
+        { "name": "Tatlılar", "items": [
+          { "name": "Kaymaklı Ekmek Kadayıfı", "description": "Afyon kaymağı ile", "price_kurus": 20000 }
+        ]},
+        { "name": "İçecekler", "items": [
+          { "name": "Ayran", "description": "300 ml", "price_kurus": 4000 },
+          { "name": "Çay", "description": "Bardak", "price_kurus": 2500 }
+        ]}
+      ]
+    }
+  ]
+}

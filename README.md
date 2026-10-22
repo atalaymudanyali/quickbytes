@@ -33,10 +33,59 @@ Needs Docker and Go 1.27+.
 
 ```bash
 make up        # start PostgreSQL + the API in Docker
+make seed      # fill it with Istanbul demo data
 curl localhost:8080/readyz
 make test      # run all tests (starts the database if needed)
 make down      # stop everything
 ```
+
+### Demo data
+
+`make seed` adds 13 restaurants across Kadıköy, Üsküdar, Beşiktaş, Şişli, Fatih and
+Beyoğlu, with real street coordinates and Turkish menus priced in kuruş (96 dishes),
+plus demo accounts. Running it again only adds what's missing, so IDs stay the same.
+`make seed-reset` deletes the demo accounts and everything they own, then seeds
+fresh. Other accounts are never touched. Both refuse any database that isn't local.
+
+Every demo account's password is **`quickbytes-demo`**. They live on the reserved
+`.test` domain, so they can never be real inboxes.
+
+| Account | Profiles |
+|---|---|
+| `musteri@demo.quickbytes.test` | customer |
+| `kurye@demo.quickbytes.test` | customer, driver |
+| `demo@demo.quickbytes.test` | customer, restaurant, driver (owns Kuzguncuk Fırını) |
+| `hasan@demo.quickbytes.test` | customer, restaurant (two branches of Hasan Usta Kebap) |
+| `elif@`, `murat@`, `zeynep@demo.quickbytes.test` | customer, restaurant |
+
+Things to try, in Swagger UI or with curl:
+
+```bash
+# Near me from Moda: three Kadıköy restaurants. Bahariye Lahmacun is paused
+# ("accepting_orders": false). Fenerbahçe Dondurma is 1.7 km away but only
+# delivers 1 km, so it's left out.
+curl 'localhost:8080/restaurants?lat=40.9810&lng=29.0270'
+
+# From Fenerbahçe it's the closest one.
+curl 'localhost:8080/restaurants?lat=40.9712&lng=29.0405'
+
+# Sultanahmet: Divanyolu Köfte, Karaköy Pide Salonu, Fatih Çorba Salonu.
+curl 'localhost:8080/restaurants?lat=41.0055&lng=28.9768'
+
+# A menu, twice: X-Cache says MISS, then HIT (served from Redis).
+curl -si localhost:8080/restaurants/<id>/menu | grep X-Cache
+
+# Log in as a demo owner, then use the token in Authorize.
+curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
+  -d '{"email": "zeynep@demo.quickbytes.test", "password": "quickbytes-demo"}'
+
+# Wrong passwords for one email: the 6th try in 15 minutes gets 429 Too Many
+# Requests. Use a made-up address, not a demo account you want to keep using.
+for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code} ' localhost:8080/auth/login \
+  -H 'Content-Type: application/json' -d '{"email": "nobody@demo.quickbytes.test", "password": "wrong-password"}'; done
+```
+
+Şişli Mantı Evi's menu shows a sold-out dish (`"available": false`).
 
 ### API documentation
 
