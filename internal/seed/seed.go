@@ -28,7 +28,7 @@ type Seeder struct {
 
 // Counts says how many things of each kind a run created, or found already there.
 type Counts struct {
-	Accounts, Restaurants, Categories, Items int
+	Accounts, Restaurants, Categories, Items, OptionGroups, OptionChoices int
 }
 
 type Report struct {
@@ -39,7 +39,8 @@ type Report struct {
 // Run creates whatever in d is missing and leaves the rest alone, so running it
 // again changes nothing and every ID stays the same. Things are found by their
 // natural key: accounts by email, restaurants by owner and name, categories and
-// items by name within their restaurant.
+// items by name within their restaurant, option groups by name within their item,
+// and choices by name within their group.
 func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
 	var rep Report
 	if err := d.Validate(); err != nil {
@@ -146,11 +147,11 @@ func (s *Seeder) menu(ctx context.Context, restaurantID, owner uuid.UUID, want [
 	if err != nil {
 		return err
 	}
-	categories, items := map[string]uuid.UUID{}, map[string]bool{}
+	categories, items := map[string]uuid.UUID{}, map[string]menus.MenuItem{}
 	for _, c := range current.Categories {
 		categories[c.Name] = c.ID
 		for _, it := range c.Items {
-			items[it.Name] = true
+			items[it.Name] = it
 		}
 	}
 
@@ -168,24 +169,82 @@ func (s *Seeder) menu(ctx context.Context, restaurantID, owner uuid.UUID, want [
 		}
 
 		for _, it := range c.Items {
-			if items[it.Name] {
+			existing, ok := items[it.Name]
+			if ok {
 				rep.Existing.Items++
-				continue
-			}
-			created, err := s.Menus.CreateItem(ctx, restaurantID, owner, menus.NewItem{
-				CategoryID: id, Name: it.Name, Description: it.Description, PriceKurus: it.PriceKurus,
-			})
-			if err != nil {
-				return fmt.Errorf("item %s: %w", it.Name, err)
-			}
-			if !it.IsAvailable() {
-				off := false
-				_, err = s.Menus.UpdateItem(ctx, restaurantID, owner, created.ID, menus.ItemPatch{Available: &off})
+			} else {
+				created, err := s.Menus.CreateItem(ctx, restaurantID, owner, menus.NewItem{
+					CategoryID: id, Name: it.Name, Description: it.Description, PriceKurus: it.PriceKurus,
+				})
 				if err != nil {
 					return fmt.Errorf("item %s: %w", it.Name, err)
 				}
+				if !it.IsAvailable() {
+					off := false
+					_, err = s.Menus.UpdateItem(ctx, restaurantID, owner, created.ID, menus.ItemPatch{Available: &off})
+					if err != nil {
+						return fmt.Errorf("item %s: %w", it.Name, err)
+					}
+				}
+				existing = menus.MenuItem{Item: created}
+				rep.Created.Items++
 			}
-			rep.Created.Items++
+			// Also for items that were already there: a data set that gained
+			// options gets them added on the next plain `make seed`.
+			if err := s.options(ctx, restaurantID, owner, existing, it.Options, rep); err != nil {
+				return fmt.Errorf("item %s: %w", it.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// options creates the item's missing option groups and choices. Like items,
+// what's already there is left as it is, even if the owner changed it since.
+func (s *Seeder) options(ctx context.Context, restaurantID, owner uuid.UUID, item menus.MenuItem, want []OptionGroup, rep *Report) error {
+	groups := map[string]menus.MenuOptionGroup{}
+	for _, g := range item.OptionGroups {
+		groups[g.Name] = g
+	}
+
+	for _, g := range want {
+		group, ok := groups[g.Name]
+		if ok {
+			rep.Existing.OptionGroups++
+		} else {
+			created, err := s.Menus.CreateOptionGroup(ctx, restaurantID, owner, item.ID, menus.NewOptionGroup{
+				Name: g.Name, MinPicks: g.MinPicks, MaxPicks: g.MaxPicks,
+			})
+			if err != nil {
+				return fmt.Errorf("option group %s: %w", g.Name, err)
+			}
+			group = menus.MenuOptionGroup{OptionGroup: created}
+			rep.Created.OptionGroups++
+		}
+
+		choices := map[string]bool{}
+		for _, c := range group.Choices {
+			choices[c.Name] = true
+		}
+		for _, c := range g.Choices {
+			if choices[c.Name] {
+				rep.Existing.OptionChoices++
+				continue
+			}
+			created, err := s.Menus.CreateOptionChoice(ctx, restaurantID, owner, group.ID, menus.NewOptionChoice{
+				Name: c.Name, ExtraPriceKurus: c.ExtraPriceKurus,
+			})
+			if err != nil {
+				return fmt.Errorf("option group %s: choice %s: %w", g.Name, c.Name, err)
+			}
+			if !c.IsAvailable() {
+				off := false
+				_, err = s.Menus.UpdateOptionChoice(ctx, restaurantID, owner, created.ID, menus.OptionChoicePatch{Available: &off})
+				if err != nil {
+					return fmt.Errorf("option group %s: choice %s: %w", g.Name, c.Name, err)
+				}
+			}
+			rep.Created.OptionChoices++
 		}
 	}
 	return nil

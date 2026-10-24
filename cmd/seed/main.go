@@ -104,7 +104,9 @@ func printReport(out io.Writer, d seed.Data, rep seed.Report) {
 	fmt.Fprintf(out, "  accounts     %7d  %13d\n", c.Accounts, e.Accounts)
 	fmt.Fprintf(out, "  restaurants  %7d  %13d\n", c.Restaurants, e.Restaurants)
 	fmt.Fprintf(out, "  categories   %7d  %13d\n", c.Categories, e.Categories)
-	fmt.Fprintf(out, "  items        %7d  %13d\n\n", c.Items, e.Items)
+	fmt.Fprintf(out, "  items        %7d  %13d\n", c.Items, e.Items)
+	fmt.Fprintf(out, "  option groups %6d  %13d\n", c.OptionGroups, e.OptionGroups)
+	fmt.Fprintf(out, "  choices      %7d  %13d\n\n", c.OptionChoices, e.OptionChoices)
 
 	fmt.Fprintf(out, "Demo accounts (password: SEED_PASSWORD, see the README):\n")
 	for _, a := range d.Accounts {

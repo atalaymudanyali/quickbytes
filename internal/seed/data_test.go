@@ -16,13 +16,20 @@ func TestIstanbulDataIsValid(t *testing.T) {
 
 	// The data is there to show features off, so check the showcase pieces exist.
 	branches := map[string]int{}
-	var paused, soldOut bool
+	var paused, soldOut, required, optional, choiceOff bool
 	for _, r := range d.Restaurants {
 		branches[r.Owner]++
 		paused = paused || !r.AcceptingOrders
 		for _, c := range r.Categories {
 			for _, it := range c.Items {
 				soldOut = soldOut || !it.IsAvailable()
+				for _, g := range it.Options {
+					required = required || g.MinPicks > 0
+					optional = optional || g.MinPicks == 0
+					for _, ch := range g.Choices {
+						choiceOff = choiceOff || !ch.IsAvailable()
+					}
+				}
 			}
 		}
 	}
@@ -39,6 +46,9 @@ func TestIstanbulDataIsValid(t *testing.T) {
 	for what, ok := range map[string]bool{
 		"a paused restaurant":            paused,
 		"a sold-out item":                soldOut,
+		"a required option group":        required,
+		"an optional option group":       optional,
+		"a switched-off option choice":   choiceOff,
 		"an owner with several branches": multiBranch,
 		"a driver":                       driver,
 		"an account with every profile":  allProfiles,
@@ -68,7 +78,9 @@ const valid = `{
     "owner": "owner@demo.quickbytes.test", "name": "Test Kebap", "address": "Moda Cd. 1",
     "lat": 40.98, "lng": 29.03, "delivery_radius_m": 3000, "accepting_orders": true,
     "categories": [{"name": "Kebaplar", "items": [
-      {"name": "Adana", "description": "", "price_kurus": 45000}
+      {"name": "Adana", "description": "", "price_kurus": 45000, "options": [
+        {"name": "Boy", "min_picks": 1, "max_picks": 1, "choices": [{"name": "Küçük"}, {"name": "Büyük", "extra_price_kurus": 4000}]}
+      ]}
     ]}]
   }]
 }`
@@ -90,8 +102,17 @@ func TestParse(t *testing.T) {
 		{"unknown owner", `"owner": "owner@`, `"owner": "nobody@`, "not in accounts"},
 		{"customer as extra role", `"extra_roles": []`, `"extra_roles": ["customer"]`, "must be restaurant or driver"},
 		{"empty category", `"items": [
-      {"name": "Adana", "description": "", "price_kurus": 45000}
+      {"name": "Adana", "description": "", "price_kurus": 45000, "options": [
+        {"name": "Boy", "min_picks": 1, "max_picks": 1, "choices": [{"name": "Küçük"}, {"name": "Büyük", "extra_price_kurus": 4000}]}
+      ]}
     ]`, `"items": []`, "has no items"},
+		{"min above max", `"min_picks": 1, "max_picks": 1`, `"min_picks": 2, "max_picks": 1`, "picks must fit"},
+		{"too many picks", `"max_picks": 1`, `"max_picks": 21`, "picks must fit"},
+		{"negative extra price", `"extra_price_kurus": 4000`, `"extra_price_kurus": -1`, "extra price must be"},
+		{"choice twice", `{"name": "Büyük"`, `{"name": "Küçük"`, "choice Küçük used twice"},
+		{"group without choices", `"choices": [{"name": "Küçük"}, {"name": "Büyük", "extra_price_kurus": 4000}]`, `"choices": []`, "has no choices"},
+		{"required group can't be met", `{"name": "Küçük"}, {"name": "Büyük", "extra_price_kurus": 4000}`,
+			`{"name": "Küçük", "available": false}, {"name": "Büyük", "extra_price_kurus": 4000, "available": false}`, "only 0 choices are available"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

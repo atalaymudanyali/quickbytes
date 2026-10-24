@@ -61,9 +61,27 @@ type Item struct {
 	PriceKurus  int    `json:"price_kurus"`
 	// Missing means available. A pointer tells "not written" apart from false.
 	Available *bool `json:"available,omitempty"`
+	// The dish's option groups ("Boy: pick exactly 1"), in display order.
+	Options []OptionGroup `json:"options,omitempty"`
 }
 
 func (i Item) IsAvailable() bool { return i.Available == nil || *i.Available }
+
+type OptionGroup struct {
+	Name     string         `json:"name"`
+	MinPicks int            `json:"min_picks"`
+	MaxPicks int            `json:"max_picks"`
+	Choices  []OptionChoice `json:"choices"`
+}
+
+type OptionChoice struct {
+	Name string `json:"name"`
+	// Missing means 0: no extra charge.
+	ExtraPriceKurus int   `json:"extra_price_kurus,omitempty"`
+	Available       *bool `json:"available,omitempty"`
+}
+
+func (c OptionChoice) IsAvailable() bool { return c.Available == nil || *c.Available }
 
 // Istanbul returns the built-in data set, already checked with Validate.
 func Istanbul() (Data, error) {
@@ -170,10 +188,55 @@ func (d Data) Validate() error {
 				if it.PriceKurus < 1 || it.PriceKurus > menus.MaxPriceKurus {
 					bad("%s: item %s: price must be 1 to %d kuruş", where, it.Name, menus.MaxPriceKurus)
 				}
+				validateOptions(where+": item "+it.Name, it.Options, bad)
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateOptions checks a dish's option groups. Names are unique within their
+// dish (groups) or group (choices), so a name alone finds them when seeding again.
+func validateOptions(where string, groups []OptionGroup, bad func(string, ...any)) {
+	names := map[string]bool{}
+	for _, g := range groups {
+		at := where + ": option group " + g.Name
+		if names[g.Name] {
+			bad("%s: used twice", at)
+		}
+		names[g.Name] = true
+		if !lengthBetween(g.Name, 1, 60) {
+			bad("%s: name must be 1 to 60 characters", at)
+		}
+		if g.MinPicks < 0 || g.MaxPicks < 1 || g.MaxPicks > menus.MaxPicks || g.MinPicks > g.MaxPicks {
+			bad("%s: picks must fit 0 <= min_picks <= max_picks, 1 <= max_picks <= %d", at, menus.MaxPicks)
+		}
+		if len(g.Choices) == 0 {
+			bad("%s: has no choices", at)
+		}
+
+		choices, available := map[string]bool{}, 0
+		for _, c := range g.Choices {
+			if choices[c.Name] {
+				bad("%s: choice %s used twice", at, c.Name)
+			}
+			choices[c.Name] = true
+			if !lengthBetween(c.Name, 1, 100) {
+				bad("%s: choice %q must be 1 to 100 characters", at, c.Name)
+			}
+			if c.ExtraPriceKurus < 0 || c.ExtraPriceKurus > menus.MaxPriceKurus {
+				bad("%s: choice %s: extra price must be 0 to %d kuruş", at, c.Name, menus.MaxPriceKurus)
+			}
+			if c.IsAvailable() {
+				available++
+			}
+		}
+		// The API allows it (an owner can switch choices off), but demo data
+		// shouldn't ship a dish nobody can order.
+		if available < g.MinPicks {
+			bad("%s: needs %d picks but only %d choices are available", at, g.MinPicks, available)
+		}
+	}
 }
 
 // lengthBetween counts characters, not bytes: "Çorbalar" is 8 characters but 9

@@ -22,14 +22,20 @@
           { "name": "Ezogelin Çorbası", "description": "Bulgur ve naneli, acılı", "price_kurus": 12000 }
         ]},
         { "name": "Kebaplar", "items": [
-          { "name": "Adana Kebap", "description": "Acılı zırh kıyması, lavaş, közlenmiş biber ve domates", "price_kurus": 45000 },
+          { "name": "Adana Kebap", "description": "Acılı zırh kıyması, lavaş, közlenmiş biber ve domates", "price_kurus": 45000, "options": [
+              { "name": "Porsiyon", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "1 porsiyon" }, { "name": "1,5 porsiyon", "extra_price_kurus": 20000 } ] },
+              { "name": "Acı", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Acılı" }, { "name": "Acısız" } ] },
+              { "name": "Yanında", "min_picks": 0, "max_picks": 2, "choices": [ { "name": "Ekstra lavaş", "extra_price_kurus": 1500 }, { "name": "Cacık", "extra_price_kurus": 4000 } ] }
+          ]},
           { "name": "Urfa Kebap", "description": "Acısız zırh kıyması, lavaş ve soğan salatası", "price_kurus": 45000 },
           { "name": "Kuzu Şiş", "description": "Marine kuzu but, bulgur pilavı ile", "price_kurus": 52000 },
           { "name": "Beyti Sarma", "description": "Lavaşa sarılı kebap, yoğurt ve tereyağlı sos", "price_kurus": 49000 }
         ]},
         { "name": "Lahmacun ve Pide", "items": [
           { "name": "Lahmacun", "description": "İnce hamur, kıymalı harç, maydanoz ve limon", "price_kurus": 15000 },
-          { "name": "Kıymalı Pide", "description": "Taş fırında", "price_kurus": 28000 }
+          { "name": "Kıymalı Pide", "description": "Taş fırında", "price_kurus": 28000, "options": [
+              { "name": "Ekstralar", "min_picks": 0, "max_picks": 3, "choices": [ { "name": "Kaşar", "extra_price_kurus": 4000 }, { "name": "Yumurta", "extra_price_kurus": 2000 }, { "name": "Sucuk", "extra_price_kurus": 6000, "available": false } ] }
+          ]}
         ]},
         { "name": "Tatlılar", "items": [
           { "name": "Künefe", "description": "Hatay peyniri, şerbet ve Antep fıstığı", "price_kurus": 22000 }
@@ -97,7 +103,10 @@
       "accepting_orders": false,
       "categories": [
         { "name": "Lahmacun", "items": [
-          { "name": "Lahmacun", "description": "Klasik, kıymalı", "price_kurus": 14000 },
+          { "name": "Lahmacun", "description": "Klasik, kıymalı", "price_kurus": 14000, "options": [
+              { "name": "Acı", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Acılı" }, { "name": "Acısız" } ] },
+              { "name": "Yanına içecek", "min_picks": 0, "max_picks": 1, "choices": [ { "name": "Ayran", "extra_price_kurus": 3000 }, { "name": "Şalgam", "extra_price_kurus": 3500 } ] }
+          ]},
           { "name": "Acılı Lahmacun", "description": "Bol isotlu", "price_kurus": 15000 },
           { "name": "Fındık Lahmacun", "description": "Küçük boy, 3 adet", "price_kurus": 18000 }
         ]},
@@ -120,7 +129,11 @@
       "accepting_orders": true,
       "categories": [
         { "name": "Dondurmalar", "items": [
-          { "name": "Maraş Dondurması", "description": "Keçi sütü ve salep, bir top", "price_kurus": 6000 },
+          { "name": "Maraş Dondurması", "description": "Keçi sütü ve salep, bir top", "price_kurus": 6000, "options": [
+              { "name": "Top sayısı", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "2 top" }, { "name": "3 top", "extra_price_kurus": 3000 }, { "name": "4 top", "extra_price_kurus": 6000 } ] },
+              { "name": "Sunum", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Külah" }, { "name": "Kase" } ] },
+              { "name": "Üzerine", "min_picks": 0, "max_picks": 2, "choices": [ { "name": "Antep fıstığı", "extra_price_kurus": 3000 }, { "name": "Çikolata sos", "extra_price_kurus": 2000 } ] }
+          ]},
           { "name": "Fıstıklı Dondurma", "description": "Antep fıstıklı, bir top", "price_kurus": 7000 },
           { "name": "Çikolatalı Dondurma", "description": "Bitter çikolatalı, bir top", "price_kurus": 6000 },
           { "name": "Dondurmalı İrmik Helvası", "description": "Sıcak helva, bir top kaymaklı ile", "price_kurus": 16000 }
@@ -193,13 +206,18 @@
           { "name": "Kahvaltı Tabağı", "description": "Tek kişilik, haşlanmış yumurta ile", "price_kurus": 45000 }
         ]},
         { "name": "Yumurtalar", "items": [
-          { "name": "Menemen", "description": "Domates, biber ve yumurta", "price_kurus": 22000 },
+          { "name": "Menemen", "description": "Domates, biber ve yumurta", "price_kurus": 22000, "options": [
+              { "name": "Soğan", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Soğanlı" }, { "name": "Soğansız" } ] },
+              { "name": "Ekstralar", "min_picks": 0, "max_picks": 2, "choices": [ { "name": "Sucuk", "extra_price_kurus": 5000 }, { "name": "Kaşar", "extra_price_kurus": 4000 } ] }
+          ]},
           { "name": "Sucuklu Yumurta", "description": "Sahanda", "price_kurus": 26000 },
           { "name": "Çılbır", "description": "Sarımsaklı yoğurt ve kırmızı biberli tereyağı", "price_kurus": 24000 }
         ]},
         { "name": "İçecekler", "items": [
           { "name": "Çay", "description": "Bardak", "price_kurus": 3000 },
-          { "name": "Türk Kahvesi", "description": "Lokum ile", "price_kurus": 9000 }
+          { "name": "Türk Kahvesi", "description": "Lokum ile", "price_kurus": 9000, "options": [
+              { "name": "Şeker", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Sade" }, { "name": "Az şekerli" }, { "name": "Orta" }, { "name": "Şekerli" } ] }
+          ]}
         ]}
       ]
     },
@@ -219,7 +237,11 @@
           { "name": "Izgara Köfte", "description": "Kasap köfte, patates püresi ile", "price_kurus": 54000 },
           { "name": "Tavuk Şnitzel", "description": "Yeşil salata ile", "price_kurus": 48000 },
           { "name": "Mantarlı Risotto", "description": "Parmesan ile", "price_kurus": 52000 },
-          { "name": "Burger", "description": "180 g dana, cheddar, karamelize soğan", "price_kurus": 56000 }
+          { "name": "Burger", "description": "180 g dana, cheddar, karamelize soğan", "price_kurus": 56000, "options": [
+              { "name": "Pişme derecesi", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Az pişmiş" }, { "name": "Orta pişmiş" }, { "name": "İyi pişmiş" } ] },
+              { "name": "Ekstralar", "min_picks": 0, "max_picks": 4, "choices": [ { "name": "Ekstra cheddar", "extra_price_kurus": 4000 }, { "name": "Dana bacon", "extra_price_kurus": 6000 }, { "name": "Jalapeño", "extra_price_kurus": 2500 }, { "name": "Ekstra köfte", "extra_price_kurus": 18000 } ] },
+              { "name": "Menü", "min_picks": 0, "max_picks": 1, "choices": [ { "name": "Patates + içecek", "extra_price_kurus": 12000 } ] }
+          ]}
         ]},
         { "name": "Tatlılar", "items": [
           { "name": "Sufle", "description": "Akışkan bitter çikolata, dondurma ile", "price_kurus": 30000 },
@@ -236,7 +258,10 @@
       "accepting_orders": true,
       "categories": [
         { "name": "Mantılar", "items": [
-          { "name": "Kayseri Mantısı", "description": "Sarımsaklı yoğurt ve tereyağlı sos", "price_kurus": 32000 },
+          { "name": "Kayseri Mantısı", "description": "Sarımsaklı yoğurt ve tereyağlı sos", "price_kurus": 32000, "options": [
+              { "name": "Yoğurt", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Sarımsaklı" }, { "name": "Sarımsaksız" } ] },
+              { "name": "Ekstralar", "min_picks": 1, "max_picks": 2, "choices": [ { "name": "Tereyağlı sos" }, { "name": "Sumak" }, { "name": "Pul biber" } ] }
+          ]},
           { "name": "Kızarmış Mantı", "description": "Çıtır, yoğurtlu", "price_kurus": 34000 },
           { "name": "Hingel", "description": "Patatesli, Kafkas usulü", "price_kurus": 30000, "available": false }
         ]},
@@ -301,7 +326,9 @@
         { "name": "Pideler", "items": [
           { "name": "Kıymalı Pide", "description": "Taş fırında", "price_kurus": 28000 },
           { "name": "Kuşbaşılı Pide", "description": "Dana kuşbaşı, taş fırında", "price_kurus": 34000 },
-          { "name": "Karışık Pide", "description": "Kıyma, sucuk ve kaşar", "price_kurus": 36000 },
+          { "name": "Karışık Pide", "description": "Kıyma, sucuk ve kaşar", "price_kurus": 36000, "options": [
+              { "name": "Boy", "min_picks": 1, "max_picks": 1, "choices": [ { "name": "Tek kişilik" }, { "name": "Büyük", "extra_price_kurus": 12000 } ] }
+          ]},
           { "name": "Yumurtalı Kaşarlı Pide", "description": "Taş fırında", "price_kurus": 26000 }
         ]},
         { "name": "Tatlılar", "items": [
