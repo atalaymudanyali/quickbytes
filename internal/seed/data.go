@@ -40,14 +40,16 @@ type Account struct {
 
 type Restaurant struct {
 	// Email of the account that owns it. That account needs a restaurant profile.
-	Owner           string     `json:"owner"`
-	Name            string     `json:"name"`
-	Address         string     `json:"address"`
-	Lat             float64    `json:"lat"`
-	Lng             float64    `json:"lng"`
-	DeliveryRadiusM int        `json:"delivery_radius_m"`
-	AcceptingOrders bool       `json:"accepting_orders"`
-	Categories      []Category `json:"categories"`
+	Owner            string     `json:"owner"`
+	Name             string     `json:"name"`
+	Address          string     `json:"address"`
+	Lat              float64    `json:"lat"`
+	Lng              float64    `json:"lng"`
+	DeliveryRadiusM  int        `json:"delivery_radius_m"`
+	DeliveryFeeKurus int        `json:"delivery_fee_kurus"`
+	MinBasketKurus   int        `json:"min_basket_kurus"`
+	AcceptingOrders  bool       `json:"accepting_orders"`
+	Categories       []Category `json:"categories"`
 }
 
 type Category struct {
@@ -150,6 +152,12 @@ func (d Data) Validate() error {
 		if r.DeliveryRadiusM < restaurants.MinDeliveryRadiusM || r.DeliveryRadiusM > restaurants.MaxDeliveryRadiusM {
 			bad("%s: delivery radius must be %d to %d m", where,
 				restaurants.MinDeliveryRadiusM, restaurants.MaxDeliveryRadiusM)
+		}
+		if r.DeliveryFeeKurus < 0 || r.DeliveryFeeKurus > restaurants.MaxDeliveryFeeKurus {
+			bad("%s: delivery fee must be 0 to %d kuruş", where, restaurants.MaxDeliveryFeeKurus)
+		}
+		if r.MinBasketKurus < 0 || r.MinBasketKurus > restaurants.MaxMinBasketKurus {
+			bad("%s: minimum basket must be 0 to %d kuruş", where, restaurants.MaxMinBasketKurus)
 		}
 		if isOwner, ok := owners[r.Owner]; !ok {
 			bad("%s: owner %s is not in accounts", where, r.Owner)

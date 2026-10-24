@@ -15,6 +15,7 @@
       "address": "Caferağa Mh., Moda Cd. No:12, Kadıköy",
       "lat": 40.9875, "lng": 29.0262,
       "delivery_radius_m": 3000,
+      "delivery_fee_kurus": 2990, "min_basket_kurus": 30000,
       "accepting_orders": true,
       "categories": [
         { "name": "Çorbalar", "items": [
@@ -52,6 +53,7 @@
       "address": "Sinanpaşa Mh., Ortabahçe Cd. No:8, Beşiktaş",
       "lat": 41.0430, "lng": 29.0060,
       "delivery_radius_m": 3000,
+      "delivery_fee_kurus": 3490, "min_basket_kurus": 30000,
       "accepting_orders": true,
       "categories": [
         { "name": "Kebaplar", "items": [
@@ -76,6 +78,7 @@
       "address": "Caferağa Mh., Dr. Esat Işık Cd. No:30, Moda, Kadıköy",
       "lat": 40.9832, "lng": 29.0268,
       "delivery_radius_m": 2500,
+      "delivery_fee_kurus": 2490, "min_basket_kurus": 25000,
       "accepting_orders": true,
       "categories": [
         { "name": "Ev Yemekleri", "items": [
@@ -100,6 +103,7 @@
       "address": "Osmanağa Mh., Bahariye Cd. No:45, Kadıköy",
       "lat": 40.9888, "lng": 29.0302,
       "delivery_radius_m": 2000,
+      "delivery_fee_kurus": 1990, "min_basket_kurus": 20000,
       "accepting_orders": false,
       "categories": [
         { "name": "Lahmacun", "items": [
@@ -126,6 +130,7 @@
       "address": "Fenerbahçe Mh., Fener Kalamış Cd. No:70, Kadıköy",
       "lat": 40.9700, "lng": 29.0420,
       "delivery_radius_m": 1000,
+      "delivery_fee_kurus": 0, "min_basket_kurus": 15000,
       "accepting_orders": true,
       "categories": [
         { "name": "Dondurmalar", "items": [
@@ -150,6 +155,7 @@
       "address": "Mimar Sinan Mh., Hakimiyet-i Milliye Cd. No:5, Üsküdar",
       "lat": 41.0262, "lng": 29.0150,
       "delivery_radius_m": 3000,
+      "delivery_fee_kurus": 4990, "min_basket_kurus": 50000,
       "accepting_orders": true,
       "categories": [
         { "name": "Balıklar", "items": [
@@ -175,6 +181,7 @@
       "address": "Kuzguncuk Mh., İcadiye Cd. No:22, Üsküdar",
       "lat": 41.0365, "lng": 29.0310,
       "delivery_radius_m": 2000,
+      "delivery_fee_kurus": 0, "min_basket_kurus": 10000,
       "accepting_orders": true,
       "categories": [
         { "name": "Börekler", "items": [
@@ -199,6 +206,7 @@
       "address": "Sinanpaşa Mh., Şair Nedim Cd. No:3, Beşiktaş",
       "lat": 41.0440, "lng": 29.0030,
       "delivery_radius_m": 2500,
+      "delivery_fee_kurus": 2990, "min_basket_kurus": 40000,
       "accepting_orders": true,
       "categories": [
         { "name": "Kahvaltılar", "items": [
@@ -227,6 +235,7 @@
       "address": "Teşvikiye Mh., Abdi İpekçi Cd. No:18, Şişli",
       "lat": 41.0510, "lng": 28.9940,
       "delivery_radius_m": 2500,
+      "delivery_fee_kurus": 5990, "min_basket_kurus": 60000,
       "accepting_orders": true,
       "categories": [
         { "name": "Başlangıçlar", "items": [
@@ -255,6 +264,7 @@
       "address": "Halaskargazi Cd. No:210, Şişli",
       "lat": 41.0600, "lng": 28.9870,
       "delivery_radius_m": 3000,
+      "delivery_fee_kurus": 2490, "min_basket_kurus": 25000,
       "accepting_orders": true,
       "categories": [
         { "name": "Mantılar", "items": [
@@ -281,6 +291,7 @@
       "address": "Alemdar Mh., Divanyolu Cd. No:14, Fatih",
       "lat": 41.0082, "lng": 28.9750,
       "delivery_radius_m": 2000,
+      "delivery_fee_kurus": 2990, "min_basket_kurus": 25000,
       "accepting_orders": true,
       "categories": [
         { "name": "Köfteler", "items": [
@@ -302,6 +313,7 @@
       "address": "Kızıltaş Mh., Macar Kardeşler Cd. No:40, Fatih",
       "lat": 41.0175, "lng": 28.9440,
       "delivery_radius_m": 3500,
+      "delivery_fee_kurus": 1990, "min_basket_kurus": 15000,
       "accepting_orders": true,
       "categories": [
         { "name": "Çorbalar", "items": [
@@ -321,6 +333,7 @@
       "address": "Kemankeş Karamustafa Paşa Mh., Necatibey Cd. No:9, Beyoğlu",
       "lat": 41.0240, "lng": 28.9770,
       "delivery_radius_m": 2500,
+      "delivery_fee_kurus": 2490, "min_basket_kurus": 25000,
       "accepting_orders": true,
       "categories": [
         { "name": "Pideler", "items": [

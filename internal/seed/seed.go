@@ -124,6 +124,7 @@ func (s *Seeder) restaurant(ctx context.Context, owner uuid.UUID, r Restaurant, 
 
 	got, err := s.Restaurants.Create(ctx, owner, restaurants.New{
 		Name: r.Name, Address: r.Address, Lat: r.Lat, Lng: r.Lng, DeliveryRadiusM: r.DeliveryRadiusM,
+		DeliveryFeeKurus: r.DeliveryFeeKurus, MinBasketKurus: r.MinBasketKurus,
 	})
 	if err != nil {
 		return restaurants.Restaurant{}, err
