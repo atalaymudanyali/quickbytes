@@ -718,6 +718,192 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /restaurants/{id}/menu/items/{item_id}/option-groups:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/ItemID"
+    post:
+      tags: [menus]
+      operationId: createOptionGroup
+      summary: Add an option group to a dish
+      description: |
+        A question the dish asks, e.g. "Size: pick exactly 1" (`min_picks: 1, max_picks: 1`)
+        or "Extras: up to 3" (`min_picks: 0, max_picks: 3`). Added after the dish's other
+        groups. Works on archived dishes too, so options can be prepared before restoring.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, min_picks, max_picks]
+              properties:
+                name: { $ref: "#/components/schemas/OptionGroupName" }
+                min_picks: { $ref: "#/components/schemas/MinPicks" }
+                max_picks: { $ref: "#/components/schemas/MaxPicks" }
+      responses:
+        "201":
+          description: Created, without choices yet.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionGroup" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/option-groups/{group_id}:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/OptionGroupID"
+    patch:
+      tags: [menus]
+      operationId: updateOptionGroup
+      summary: Change an option group
+      description: |
+        Only the fields sent are changed. `min_picks` may not end up above `max_picks`; when
+        only one is sent, it's compared with the stored other (422 on `min_picks`).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { $ref: "#/components/schemas/OptionGroupName" }
+                min_picks: { $ref: "#/components/schemas/MinPicks" }
+                max_picks: { $ref: "#/components/schemas/MaxPicks" }
+      responses:
+        "200":
+          description: The updated group, without its choices (the menu lists those).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionGroup" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      tags: [menus]
+      operationId: deleteOptionGroup
+      summary: Delete an option group and its choices
+      description: |
+        A real delete, not an archive. To take a choice off for a while, set its
+        `available` to false instead. Past orders keep their own copy of names and prices.
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+
+  /restaurants/{id}/menu/option-groups/{group_id}/choices:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/OptionGroupID"
+    post:
+      tags: [menus]
+      operationId: createOptionChoice
+      summary: Add a choice to an option group
+      description: Added after the group's other choices. `extra_price_kurus` defaults to 0 (no extra charge).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { $ref: "#/components/schemas/OptionChoiceName" }
+                extra_price_kurus: { $ref: "#/components/schemas/ExtraPriceKurus" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionChoice" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /restaurants/{id}/menu/option-choices/{choice_id}:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+      - $ref: "#/components/parameters/OptionChoiceID"
+    patch:
+      tags: [menus]
+      operationId: updateOptionChoice
+      summary: Change an option choice
+      description: |
+        Only the fields sent are changed. Switch off for a while with `"available": false`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { $ref: "#/components/schemas/OptionChoiceName" }
+                extra_price_kurus: { $ref: "#/components/schemas/ExtraPriceKurus" }
+                available: { type: boolean, description: "false: out for now (shown greyed out, can't be picked)." }
+      responses:
+        "200":
+          description: The updated choice.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionChoice" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      tags: [menus]
+      operationId: deleteOptionChoice
+      summary: Delete an option choice
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/MenuEntryNotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -755,6 +941,18 @@ components:
       in: path
       required: true
       description: The dish's ID.
+      schema: { type: string }
+    OptionGroupID:
+      name: group_id
+      in: path
+      required: true
+      description: The option group's ID.
+      schema: { type: string }
+    OptionChoiceID:
+      name: choice_id
+      in: path
+      required: true
+      description: The option choice's ID.
       schema: { type: string }
 
   responses:
@@ -832,8 +1030,12 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Deleted:
+      description: Deleted. No body.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
     MenuEntryNotFound:
-      description: The restaurant (code `restaurant_not_found`), section (`category_not_found`) or dish (`item_not_found`) in the URL doesn't exist or isn't yours.
+      description: The restaurant (code `restaurant_not_found`), section (`category_not_found`), dish (`item_not_found`), option group (`option_group_not_found`) or option choice (`option_choice_not_found`) in the URL doesn't exist or isn't yours.
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
       content:
@@ -1089,6 +1291,35 @@ components:
           format: date-time
           description: Only present when archived (only in the owner's view).
 
+    OptionGroupName:
+      type: string
+      minLength: 1
+      maxLength: 60
+      example: Boy
+    MinPicks:
+      type: integer
+      minimum: 0
+      maximum: 20
+      description: The fewest choices the customer must pick. 0 = optional group.
+      example: 1
+    MaxPicks:
+      type: integer
+      minimum: 1
+      maximum: 20
+      description: The most choices the customer may pick. Never below min_picks.
+      example: 1
+    OptionChoiceName:
+      type: string
+      minLength: 1
+      maxLength: 100
+      example: Büyük
+    ExtraPriceKurus:
+      type: integer
+      minimum: 0
+      maximum: 10000000
+      description: "Added to the dish's price, in kuruş: 4000 = 40,00 TL. 0 = no extra charge."
+      example: 4000
+
     OptionGroup:
       type: object
       description: |
@@ -1099,9 +1330,9 @@ components:
       properties:
         id: { type: string, format: uuid }
         item_id: { type: string, format: uuid }
-        name: { type: string, minLength: 1, maxLength: 60, example: Boy }
-        min_picks: { type: integer, minimum: 0, maximum: 20, example: 1 }
-        max_picks: { type: integer, minimum: 1, maximum: 20, example: 1 }
+        name: { $ref: "#/components/schemas/OptionGroupName" }
+        min_picks: { $ref: "#/components/schemas/MinPicks" }
+        max_picks: { $ref: "#/components/schemas/MaxPicks" }
         position:
           type: integer
           description: Display order within the item, 1 first.
@@ -1112,13 +1343,8 @@ components:
       properties:
         id: { type: string, format: uuid }
         group_id: { type: string, format: uuid }
-        name: { type: string, minLength: 1, maxLength: 100, example: Büyük }
-        extra_price_kurus:
-          type: integer
-          minimum: 0
-          maximum: 10000000
-          description: "Added to the item's price, in kuruş. 0 = no extra charge."
-          example: 4000
+        name: { $ref: "#/components/schemas/OptionChoiceName" }
+        extra_price_kurus: { $ref: "#/components/schemas/ExtraPriceKurus" }
         available:
           type: boolean
           description: false = out for now. Show greyed out; can't be picked.
