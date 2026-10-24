@@ -44,9 +44,12 @@ func (s *Server) handleMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 // menuETag builds the label from the menu's version, which goes up on every
-// change. ETags are quoted strings by HTTP's rules.
+// change. ETags are quoted strings by HTTP's rules. The "menu2" prefix is the
+// JSON format, like the cache key's "v2": an app holding a copy from before
+// options existed sends a "menu-" tag, which no longer matches, so it gets the
+// new menu instead of a 304 telling it to keep the old one.
 func menuETag(m menus.Menu) string {
-	return fmt.Sprintf(`"menu-%s-v%d"`, m.RestaurantID, m.Version)
+	return fmt.Sprintf(`"menu2-%s-v%d"`, m.RestaurantID, m.Version)
 }
 
 // etagMatches reports whether If-None-Match names etag. The header may list

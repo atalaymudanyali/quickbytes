@@ -13,13 +13,12 @@ import (
 // OptionGroup is one question a dish asks: "Size: pick exactly 1", "Extras: up
 // to 3". MinPicks 0 makes it optional; MinPicks = MaxPicks = 1 is "pick one".
 type OptionGroup struct {
-	ID       uuid.UUID      `json:"id"`
-	ItemID   uuid.UUID      `json:"item_id"`
-	Name     string         `json:"name"`
-	MinPicks int            `json:"min_picks"`
-	MaxPicks int            `json:"max_picks"`
-	Position int            `json:"position"`
-	Choices  []OptionChoice `json:"choices"`
+	ID       uuid.UUID `json:"id"`
+	ItemID   uuid.UUID `json:"item_id"`
+	Name     string    `json:"name"`
+	MinPicks int       `json:"min_picks"`
+	MaxPicks int       `json:"max_picks"`
+	Position int       `json:"position"`
 }
 
 // OptionChoice is one answer in a group: "Large, +20 TL".
@@ -73,7 +72,7 @@ var (
 const groupColumns = `id, item_id, name, min_picks, max_picks, position`
 
 func scanGroup(row pgx.Row) (OptionGroup, error) {
-	g := OptionGroup{Choices: []OptionChoice{}}
+	var g OptionGroup
 	err := row.Scan(&g.ID, &g.ItemID, &g.Name, &g.MinPicks, &g.MaxPicks, &g.Position)
 	return g, err
 }
@@ -107,8 +106,7 @@ func (s *Store) CreateOptionGroup(ctx context.Context, restaurantID, ownerProfil
 	return g, err
 }
 
-// UpdateOptionGroup applies a patch. The returned group has no choices filled
-// in; the menu is where groups are read with their choices.
+// UpdateOptionGroup applies a patch.
 func (s *Store) UpdateOptionGroup(ctx context.Context, restaurantID, ownerProfileID, groupID uuid.UUID, p OptionGroupPatch) (OptionGroup, error) {
 	var g OptionGroup
 	err := s.change(ctx, restaurantID, ownerProfileID, func(tx pgx.Tx) error {

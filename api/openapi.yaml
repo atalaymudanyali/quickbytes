@@ -434,7 +434,7 @@ paths:
           required: false
           description: The `ETag` of a menu the app already has (or several, comma-separated, or `*`).
           schema: { type: string }
-          example: '"menu-01a14bab-224e-7468-8920-42d59bbb55ee-v7"'
+          example: '"menu2-01a14bab-224e-7468-8920-42d59bbb55ee-v7"'
       responses:
         "200":
           description: The menu.
@@ -735,7 +735,7 @@ components:
       schema: { type: integer, minimum: 1, example: 742 }
     MenuETag:
       description: A label for this exact version of the menu; it changes whenever the menu does. Send it back in `If-None-Match`.
-      schema: { type: string, example: '"menu-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
+      schema: { type: string, example: '"menu2-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
 
   parameters:
     RestaurantID:
@@ -1089,6 +1089,64 @@ components:
           format: date-time
           description: Only present when archived (only in the owner's view).
 
+    OptionGroup:
+      type: object
+      description: |
+        One question a dish asks, e.g. "Size: pick exactly 1" or "Extras: up to 3".
+        min_picks 0 makes the group optional; min_picks = max_picks = 1 means
+        "pick exactly one".
+      required: [id, item_id, name, min_picks, max_picks, position]
+      properties:
+        id: { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 60, example: Boy }
+        min_picks: { type: integer, minimum: 0, maximum: 20, example: 1 }
+        max_picks: { type: integer, minimum: 1, maximum: 20, example: 1 }
+        position:
+          type: integer
+          description: Display order within the item, 1 first.
+
+    OptionChoice:
+      type: object
+      required: [id, group_id, name, extra_price_kurus, available, position]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 100, example: Büyük }
+        extra_price_kurus:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+          description: "Added to the item's price, in kuruş. 0 = no extra charge."
+          example: 4000
+        available:
+          type: boolean
+          description: false = out for now. Show greyed out; can't be picked.
+        position:
+          type: integer
+          description: Display order within the group, 1 first.
+
+    MenuOptionGroup:
+      allOf:
+        - $ref: "#/components/schemas/OptionGroup"
+        - type: object
+          required: [choices]
+          properties:
+            choices:
+              type: array
+              items: { $ref: "#/components/schemas/OptionChoice" }
+
+    MenuItem:
+      allOf:
+        - $ref: "#/components/schemas/Item"
+        - type: object
+          required: [option_groups]
+          properties:
+            option_groups:
+              type: array
+              description: The item's option groups with their choices, in display order. Empty if it has none.
+              items: { $ref: "#/components/schemas/MenuOptionGroup" }
+
     MenuCategory:
       allOf:
         - $ref: "#/components/schemas/Category"
@@ -1097,7 +1155,7 @@ components:
           properties:
             items:
               type: array
-              items: { $ref: "#/components/schemas/Item" }
+              items: { $ref: "#/components/schemas/MenuItem" }
 
     Menu:
       type: object

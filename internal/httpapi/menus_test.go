@@ -291,7 +291,7 @@ func TestPublicMenuETag(t *testing.T) {
 			first := get("")
 			m := decode[menus.Menu](t, first, http.StatusOK)
 			etag := first.Header().Get("ETag")
-			if want := fmt.Sprintf(`"menu-%s-v%d"`, m.RestaurantID, m.Version); etag != want {
+			if want := fmt.Sprintf(`"menu2-%s-v%d"`, m.RestaurantID, m.Version); etag != want {
 				t.Fatalf("first read: ETag %s, want %s", etag, want)
 			}
 

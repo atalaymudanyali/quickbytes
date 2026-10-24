@@ -48,13 +48,14 @@ func NewCache(store *Store, client *redis.Client, ttl time.Duration, logger *slo
 	return c
 }
 
-// Two keys per restaurant. The "v1" is the format of what's stored: if the Menu
+// Two keys per restaurant. The "v2" is the format of what's stored: if the Menu
 // JSON ever changes shape, bump it, and old copies are simply never read again.
+// (v1 had no option groups; its copies expire on their own.)
 //
-//	menu:v1:<id>          the cached menu (JSON)
-//	menu:v1:<id>:version  the newest menu_version a change has announced
-func menuKey(id uuid.UUID) string    { return "menu:v1:" + id.String() }
-func versionKey(id uuid.UUID) string { return "menu:v1:" + id.String() + ":version" }
+//	menu:v2:<id>          the cached menu (JSON)
+//	menu:v2:<id>:version  the newest menu_version a change has announced
+func menuKey(id uuid.UUID) string    { return "menu:v2:" + id.String() }
+func versionKey(id uuid.UUID) string { return "menu:v2:" + id.String() + ":version" }
 
 // PublicMenu returns the public menu, from Redis when possible.
 func (c *Cache) PublicMenu(ctx context.Context, restaurantID uuid.UUID) (Menu, Result, error) {
