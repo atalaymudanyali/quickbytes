@@ -11,8 +11,9 @@ One iPhone app holds all three roles (customer, restaurant, driver), switched fr
 side menu.
 
 > **Status:** phase 1 of 7 (foundation) is done: accounts, restaurants, menus,
-> caching, rate limits, API docs and Istanbul demo data. Next: orders and payments.
-> See the [roadmap](#roadmap).
+> caching, rate limits, API docs and Istanbul demo data. Phase 2 (orders and payments)
+> has started: dishes now have options, such as sizes and extras. See the
+> [roadmap](#roadmap).
 
 ## Quick start
 
@@ -47,6 +48,13 @@ and `make down` stops everything.
   7 demo accounts, from `make seed`.
 - **CI:** formatting, `go vet` and the full test suite (against real PostgreSQL and
   Redis) on every pull request.
+
+Phase 2 so far:
+
+- **Dish options:** option groups with priced choices ("Boy: pick exactly 1",
+  "Ekstralar: up to 3"), each owner-set `min_picks` / `max_picks`, shown in the
+  cached menu. One shared validator checks a customer's picks; the cart and
+  checkout will reuse it.
 
 ## Measured
 
@@ -101,8 +109,8 @@ blocked attacker costs the server about 20 times less than a guess.
 ### Demo data
 
 `make seed` adds 13 restaurants across Kadıköy, Üsküdar, Beşiktaş, Şişli, Fatih and
-Beyoğlu, with real street coordinates and Turkish menus priced in kuruş (96 dishes),
-plus demo accounts. Running it again only adds what's missing, so IDs stay the same.
+Beyoğlu, with real street coordinates and Turkish menus priced in kuruş (96 dishes,
+9 of them with options), plus demo accounts. Running it again only adds what's missing, so IDs stay the same.
 `make seed-reset` deletes the demo accounts and everything they own, then seeds
 fresh. Other accounts are never touched. Both refuse any database that isn't local.
 
@@ -144,7 +152,10 @@ for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code} ' localhost:8080/
   -H 'Content-Type: application/json' -d '{"email": "nobody@demo.quickbytes.test", "password": "wrong-password"}'; done
 ```
 
-Şişli Mantı Evi's menu shows a sold-out dish (`"available": false`).
+Şişli Mantı Evi's menu shows a sold-out dish (`"available": false`). Dishes with
+options include Nişantaşı Bistro's Burger (doneness, extras, a menu deal) and
+Fenerbahçe Dondurma's Maraş Dondurması (scoops, cone or cup, toppings); Hasan Usta
+Kadıköy's Kıymalı Pide has a switched-off extra.
 
 ### API documentation
 
@@ -176,7 +187,7 @@ against it.
 | `POST /restaurants` | Create a restaurant (needs a restaurant profile). |
 | `PATCH /restaurants/{id}` | Change only the fields sent. Owner only; anyone else gets 404. |
 | `GET /me/restaurants` | The signed-in owner's restaurants. |
-| `GET /restaurants/{id}/menu` | A restaurant's menu: sections and dishes in the owner's order, sold-out dishes marked `"available": false`, removed ones left out. Public. |
+| `GET /restaurants/{id}/menu` | A restaurant's menu: sections and dishes in the owner's order, each dish with its option groups and choices, sold-out dishes and switched-off choices marked `"available": false`, removed ones left out. Public. |
 | `GET /me/restaurants/{id}/menu` | The owner's full menu, archived categories and items included (marked). |
 | `POST /restaurants/{id}/menu/categories` | Add a menu section, e.g. "Kebaplar". Owner only. |
 | `PATCH /restaurants/{id}/menu/categories/{category_id}` | Rename, archive (`"archived": true`) or restore it. |
@@ -184,6 +195,12 @@ against it.
 | `PATCH /restaurants/{id}/menu/items/{item_id}` | Change any field, mark sold out (`"available": false`), move category, archive or restore. |
 | `PUT /restaurants/{id}/menu/categories/order` | New section order: `{"category_ids": [...]}`, every visible section exactly once. |
 | `PUT /restaurants/{id}/menu/categories/{category_id}/order` | New dish order within a section: `{"item_ids": [...]}`. |
+| `POST /restaurants/{id}/menu/items/{item_id}/option-groups` | Add an option group to a dish: `{"name": "Boy", "min_picks": 1, "max_picks": 1}` means "pick exactly one". |
+| `PATCH /restaurants/{id}/menu/option-groups/{group_id}` | Rename it or change `min_picks` / `max_picks` (never min above max). |
+| `DELETE /restaurants/{id}/menu/option-groups/{group_id}` | Delete it with its choices. `204`. |
+| `POST /restaurants/{id}/menu/option-groups/{group_id}/choices` | Add a choice: `{"name": "Büyük", "extra_price_kurus": 4000}`; the price defaults to 0. |
+| `PATCH /restaurants/{id}/menu/option-choices/{choice_id}` | Rename, reprice, or switch off for now (`"available": false`). |
+| `DELETE /restaurants/{id}/menu/option-choices/{choice_id}` | Delete it. `204`. |
 
 Errors always look like
 `{"error": {"code": "...", "message": "...", "request_id": "..."}}`, and every

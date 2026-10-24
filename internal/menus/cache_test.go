@@ -117,6 +117,27 @@ func TestChangeDropsTheCopy(t *testing.T) {
 	}
 }
 
+// Options are part of the cached menu, so changing them must drop the copy too.
+func TestOptionChangeDropsTheCopy(t *testing.T) {
+	ctx := context.Background()
+	f := newCacheFixture(t)
+	m, _ := f.read(t) // MISS: stores a copy
+	f.read(t)         // HIT
+
+	itemID := m.Categories[0].Items[0].ID
+	if _, err := f.store.CreateOptionGroup(ctx, f.restaurantID, f.owner, itemID, NewOptionGroup{Name: "Boy", MinPicks: 1, MaxPicks: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	m, res := f.read(t)
+	if res != Miss {
+		t.Fatalf("read after an option change = %s, want MISS", res)
+	}
+	if got := m.Categories[0].Items[0].OptionGroups; len(got) != 1 || got[0].Name != "Boy" {
+		t.Fatalf("read after an option change shows groups %+v, want the new one", got)
+	}
+}
+
 // Replays the race step by step: a reader reads the old menu, a change lands and
 // drops the cached copy, and only then does the reader try to save its old copy.
 func TestSlowReaderCannotCacheAnOldMenu(t *testing.T) {

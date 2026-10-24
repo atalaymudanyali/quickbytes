@@ -120,6 +120,12 @@ func (s *Server) routes() []route {
 		{"PATCH /restaurants/{id}/menu/items/{item_id}", ownerOnly(s.handleUpdateItem)},
 		{"PUT /restaurants/{id}/menu/categories/order", ownerOnly(s.handleReorderCategories)},
 		{"PUT /restaurants/{id}/menu/categories/{category_id}/order", ownerOnly(s.handleReorderItems)},
+		{"POST /restaurants/{id}/menu/items/{item_id}/option-groups", ownerOnly(s.handleCreateOptionGroup)},
+		{"PATCH /restaurants/{id}/menu/option-groups/{group_id}", ownerOnly(s.handleUpdateOptionGroup)},
+		{"DELETE /restaurants/{id}/menu/option-groups/{group_id}", ownerOnly(s.handleDeleteOptionGroup)},
+		{"POST /restaurants/{id}/menu/option-groups/{group_id}/choices", ownerOnly(s.handleCreateOptionChoice)},
+		{"PATCH /restaurants/{id}/menu/option-choices/{choice_id}", ownerOnly(s.handleUpdateOptionChoice)},
+		{"DELETE /restaurants/{id}/menu/option-choices/{choice_id}", ownerOnly(s.handleDeleteOptionChoice)},
 	}
 }
 

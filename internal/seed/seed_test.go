@@ -48,6 +48,12 @@ func TestRunTwice(t *testing.T) {
 		all.Categories += len(r.Categories)
 		for _, c := range r.Categories {
 			all.Items += len(c.Items)
+			for _, it := range c.Items {
+				all.OptionGroups += len(it.Options)
+				for _, g := range it.Options {
+					all.OptionChoices += len(g.Choices)
+				}
+			}
 		}
 	}
 	if second.Existing != all {
@@ -105,6 +111,72 @@ func TestRunTwice(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSeededOptions(t *testing.T) {
+	pool := testutil.DB(t)
+	ctx := context.Background()
+	data, err := seed.Istanbul()
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuStore := menus.NewStore(pool)
+	s := &seed.Seeder{Users: users.NewStore(pool), Restaurants: restaurants.NewStore(pool), Menus: menuStore,
+		Hasher: auth.NewHasher(auth.FastParams), Password: password}
+	rep, err := s.Run(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var pide menus.MenuItem
+	for _, r := range rep.Restaurants {
+		if r.Name != "Hasan Usta Kebap Kadıköy" {
+			continue
+		}
+		m, err := menuStore.Menu(ctx, r.ID, menus.View{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range m.Categories {
+			for _, it := range c.Items {
+				if it.Name == "Kıymalı Pide" {
+					pide = it
+				}
+			}
+		}
+	}
+	if len(pide.OptionGroups) != 1 || len(pide.OptionGroups[0].Choices) != 3 {
+		t.Fatalf("Kıymalı Pide options = %+v, want Ekstralar with 3 choices", pide.OptionGroups)
+	}
+	extras := pide.OptionGroups[0]
+	if extras.Name != "Ekstralar" || extras.MinPicks != 0 || extras.MaxPicks != 3 {
+		t.Errorf("group = %+v", extras.OptionGroup)
+	}
+	for _, c := range extras.Choices {
+		if c.Name == "Sucuk" && c.Available {
+			t.Error("Sucuk is available, want switched off")
+		}
+		if c.Name == "Kaşar" && (!c.Available || c.ExtraPriceKurus != 4000) {
+			t.Errorf("Kaşar = %+v, want available at 4000 kuruş", c)
+		}
+	}
+
+	// The seeded rules are what the validator enforces.
+	var kasar, sucuk uuid.UUID
+	for _, c := range extras.Choices {
+		switch c.Name {
+		case "Kaşar":
+			kasar = c.ID
+		case "Sucuk":
+			sucuk = c.ID
+		}
+	}
+	if sel, err := menus.ValidateChoices(pide, []uuid.UUID{kasar}); err != nil || sel.ExtraKurus != 4000 {
+		t.Errorf("Kaşar: sel %+v, err %v; want valid, +4000", sel, err)
+	}
+	if _, err := menus.ValidateChoices(pide, []uuid.UUID{sucuk}); err == nil {
+		t.Error("Sucuk was accepted, but it's switched off")
+	}
 }
 
 func TestCheckLocal(t *testing.T) {
