@@ -12,6 +12,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -35,6 +36,7 @@ type Deps struct {
 	Menus       *menus.Store
 	Addresses   *addresses.Store
 	Carts       *carts.Store
+	Orders      *orders.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
 	// from the database), but must not be nil.
 	MenuCache *menus.Cache
@@ -53,6 +55,7 @@ type Server struct {
 	menus       *menus.Store
 	addresses   *addresses.Store
 	carts       *carts.Store
+	orders      *orders.Store
 	menuCache   *menus.Cache
 	limiter     *ratelimit.Limiter
 	limits      limits
@@ -76,6 +79,7 @@ func NewServer(d Deps) *Server {
 		menus:       d.Menus,
 		addresses:   d.Addresses,
 		carts:       d.Carts,
+		orders:      d.Orders,
 		menuCache:   d.MenuCache,
 		limiter:     d.Limiter,
 		limits:      defaultLimits,
@@ -100,7 +104,7 @@ func (s *Server) routes() []route {
 	ownerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleRestaurant, h))
 	}
-	// Addresses (and the cart, later) belong to the customer profile.
+	// Addresses, the cart and orders belong to the customer profile.
 	customerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleCustomer, h))
 	}
@@ -128,6 +132,18 @@ func (s *Server) routes() []route {
 		{"POST /cart/items", customerOnly(s.handleAddToCart)},
 		{"PATCH /cart/items/{item_id}", customerOnly(s.handleChangeCartItem)},
 		{"DELETE /cart/items/{item_id}", customerOnly(s.handleRemoveCartItem)},
+
+		// Orders: checkout turns the cart into one; each customer sees only theirs.
+		{"POST /orders", customerOnly(s.handlePlaceOrder)},
+		{"GET /orders", customerOnly(s.handleListMyOrders)},
+		{"GET /orders/{order_id}", customerOnly(s.handleGetOrder)},
+		{"POST /orders/{order_id}/cancel", customerOnly(s.handleCancelOrder)},
+
+		// The restaurant's side: its kitchen queue, and its buttons on an order.
+		{"GET /me/restaurants/{id}/orders", ownerOnly(s.handleKitchenOrders)},
+		{"POST /orders/{order_id}/accept", ownerOnly(s.handleAcceptOrder)},
+		{"POST /orders/{order_id}/reject", ownerOnly(s.handleRejectOrder)},
+		{"POST /orders/{order_id}/ready", ownerOnly(s.handleOrderReady)},
 
 		// Restaurants: browsing is public, managing is for owners.
 		{"GET /restaurants", public(s.handleNearbyRestaurants)},

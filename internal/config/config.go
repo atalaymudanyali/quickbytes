@@ -18,6 +18,10 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	ShutdownTimeout time.Duration
+	// OrderPayWindow is how long a placed order may wait for its payment before
+	// it's cancelled as expired; OrderExpiryEvery is how often that's checked.
+	OrderPayWindow   time.Duration
+	OrderExpiryEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -30,6 +34,15 @@ func Load() (Config, error) {
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		ShutdownTimeout: 10 * time.Second,
 	}
+	var err error
+	// Both can be shortened to watch an order expire in a demo, e.g.
+	// ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s.
+	if cfg.OrderPayWindow, err = getDuration("ORDER_PAY_WINDOW", 15*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.OrderExpiryEvery, err = getDuration("ORDER_EXPIRY_EVERY", 30*time.Second); err != nil {
+		return Config{}, err
+	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
@@ -37,6 +50,19 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("JWT_SECRET is required and must be at least 32 characters (generate one with: openssl rand -base64 48)")
 	}
 	return cfg, nil
+}
+
+// getDuration reads a duration like "15m" or "30s".
+func getDuration(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration like 15m or 30s, got %q", key, v)
+	}
+	return d, nil
 }
 
 func getenv(key, fallback string) string {
