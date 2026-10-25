@@ -17,12 +17,14 @@ import (
 // Pointer fields tell "not sent" (nil) apart from a real value. For create, the
 // handler requires the ones that matter; for update, nil means "leave unchanged".
 type restaurantRequest struct {
-	Name            *string  `json:"name"`
-	Address         *string  `json:"address"`
-	Lat             *float64 `json:"lat"`
-	Lng             *float64 `json:"lng"`
-	DeliveryRadiusM *int     `json:"delivery_radius_m"`
-	AcceptingOrders *bool    `json:"accepting_orders"`
+	Name             *string  `json:"name"`
+	Address          *string  `json:"address"`
+	Lat              *float64 `json:"lat"`
+	Lng              *float64 `json:"lng"`
+	DeliveryRadiusM  *int     `json:"delivery_radius_m"`
+	DeliveryFeeKurus *int     `json:"delivery_fee_kurus"`
+	MinBasketKurus   *int     `json:"min_basket_kurus"`
+	AcceptingOrders  *bool    `json:"accepting_orders"`
 }
 
 func (s *Server) handleCreateRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -57,9 +59,17 @@ func (s *Server) handleCreateRestaurant(w http.ResponseWriter, r *http.Request) 
 	if req.DeliveryRadiusM != nil {
 		radius = *req.DeliveryRadiusM
 	}
-	created, err := s.restaurants.Create(r.Context(), owner, restaurants.New{
+	// Not sent means free delivery and no minimum, the same as the database default.
+	n := restaurants.New{
 		Name: *req.Name, Address: *req.Address, Lat: *req.Lat, Lng: *req.Lng, DeliveryRadiusM: radius,
-	})
+	}
+	if req.DeliveryFeeKurus != nil {
+		n.DeliveryFeeKurus = *req.DeliveryFeeKurus
+	}
+	if req.MinBasketKurus != nil {
+		n.MinBasketKurus = *req.MinBasketKurus
+	}
+	created, err := s.restaurants.Create(r.Context(), owner, n)
 	if err != nil {
 		s.writeInternalError(w, r, err)
 		return
@@ -96,6 +106,7 @@ func (s *Server) handleUpdateRestaurant(w http.ResponseWriter, r *http.Request) 
 	updated, err := s.restaurants.Update(r.Context(), id, owner, restaurants.Patch{
 		Name: req.Name, Address: req.Address, Lat: req.Lat, Lng: req.Lng,
 		DeliveryRadiusM: req.DeliveryRadiusM, AcceptingOrders: req.AcceptingOrders,
+		DeliveryFeeKurus: req.DeliveryFeeKurus, MinBasketKurus: req.MinBasketKurus,
 	})
 	if errors.Is(err, restaurants.ErrNotFound) {
 		writeRestaurantNotFound(w, r)
@@ -197,6 +208,16 @@ func validateRestaurant(req restaurantRequest) map[string]string {
 		if d := *req.DeliveryRadiusM; d < restaurants.MinDeliveryRadiusM || d > restaurants.MaxDeliveryRadiusM {
 			fields["delivery_radius_m"] = fmt.Sprintf("must be %d to %d metres",
 				restaurants.MinDeliveryRadiusM, restaurants.MaxDeliveryRadiusM)
+		}
+	}
+	if req.DeliveryFeeKurus != nil {
+		if f := *req.DeliveryFeeKurus; f < 0 || f > restaurants.MaxDeliveryFeeKurus {
+			fields["delivery_fee_kurus"] = fmt.Sprintf("must be 0 to %d kuruş", restaurants.MaxDeliveryFeeKurus)
+		}
+	}
+	if req.MinBasketKurus != nil {
+		if m := *req.MinBasketKurus; m < 0 || m > restaurants.MaxMinBasketKurus {
+			fields["min_basket_kurus"] = fmt.Sprintf("must be 0 to %d kuruş", restaurants.MaxMinBasketKurus)
 		}
 	}
 	return fields

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -28,7 +29,7 @@ func TestReset(t *testing.T) {
 	userStore, restaurantStore, menuStore := users.NewStore(pool), restaurants.NewStore(pool), menus.NewStore(pool)
 	cache := menus.NewCache(menuStore, rdb, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s := &seed.Seeder{Users: userStore, Restaurants: restaurantStore, Menus: menuStore,
-		Hasher: auth.NewHasher(auth.FastParams), Password: password}
+		Addresses: addresses.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password}
 
 	before, err := s.Run(ctx, data)
 	if err != nil {

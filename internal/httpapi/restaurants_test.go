@@ -63,16 +63,28 @@ func TestCreateRestaurant(t *testing.T) {
 		if r.DeliveryRadiusM != restaurants.DefaultDeliveryRadiusM || !r.AcceptingOrders {
 			t.Fatalf("got radius %d, accepting %v; want the defaults", r.DeliveryRadiusM, r.AcceptingOrders)
 		}
+		if r.DeliveryFeeKurus != 0 || r.MinBasketKurus != 0 {
+			t.Fatalf("got fee %d, minimum %d; want free delivery and no minimum", r.DeliveryFeeKurus, r.MinBasketKurus)
+		}
+	})
+
+	t.Run("owner can set delivery terms", func(t *testing.T) {
+		r := createRestaurant(t, h, ownerToken(t, h),
+			`{"name": "Çiya", "address": "Kadıköy", "lat": 40.9906, "lng": 29.0262, "delivery_fee_kurus": 2990, "min_basket_kurus": 25000}`)
+		if r.DeliveryFeeKurus != 2990 || r.MinBasketKurus != 25000 {
+			t.Fatalf("got fee %d, minimum %d; want 2990 and 25000", r.DeliveryFeeKurus, r.MinBasketKurus)
+		}
 	})
 
 	t.Run("invalid fields all reported", func(t *testing.T) {
 		rec := send(t, h, http.MethodPost, "/restaurants", ownerToken(t, h),
-			`{"name": " ", "lat": 29.0262, "lng": 40.9906, "delivery_radius_m": 50000}`)
+			`{"name": " ", "lat": 29.0262, "lng": 40.9906, "delivery_radius_m": 50000,
+			  "delivery_fee_kurus": -1, "min_basket_kurus": 500001}`)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want 422", rec.Code)
 		}
 		got := decodeError(t, rec).Fields
-		for _, f := range []string{"name", "address", "location", "delivery_radius_m"} {
+		for _, f := range []string{"name", "address", "location", "delivery_radius_m", "delivery_fee_kurus", "min_basket_kurus"} {
 			if got[f] == "" {
 				t.Errorf("no error for %q; fields = %v", f, got)
 			}
@@ -109,6 +121,16 @@ func TestUpdateRestaurant(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &got)
 		if got.Name != "Çiya Kebap" || !got.AcceptingOrders {
 			t.Fatalf("got name %q, accepting %v; want renamed and still accepting", got.Name, got.AcceptingOrders)
+		}
+	})
+
+	t.Run("changing the fee leaves the minimum alone", func(t *testing.T) {
+		send(t, h, http.MethodPatch, path, owner, `{"min_basket_kurus": 20000}`)
+		rec := send(t, h, http.MethodPatch, path, owner, `{"delivery_fee_kurus": 1990}`)
+		var got restaurants.Restaurant
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != http.StatusOK || got.DeliveryFeeKurus != 1990 || got.MinBasketKurus != 20000 {
+			t.Fatalf("status = %d, fee %d, minimum %d; want 200, 1990, 20000", rec.Code, got.DeliveryFeeKurus, got.MinBasketKurus)
 		}
 	})
 

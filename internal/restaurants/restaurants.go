@@ -21,33 +21,46 @@ type Restaurant struct {
 	Lat             float64   `json:"lat"`
 	Lng             float64   `json:"lng"`
 	DeliveryRadiusM int       `json:"delivery_radius_m"`
-	AcceptingOrders bool      `json:"accepting_orders"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	// DeliveryFeeKurus is added to every order; MinBasketKurus is the smallest
+	// subtotal (dishes and extras, before the fee) the restaurant delivers.
+	DeliveryFeeKurus int       `json:"delivery_fee_kurus"`
+	MinBasketKurus   int       `json:"min_basket_kurus"`
+	AcceptingOrders  bool      `json:"accepting_orders"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // New holds the fields needed to create a restaurant.
 type New struct {
-	Name            string
-	Address         string
-	Lat, Lng        float64
-	DeliveryRadiusM int
+	Name             string
+	Address          string
+	Lat, Lng         float64
+	DeliveryRadiusM  int
+	DeliveryFeeKurus int
+	MinBasketKurus   int
 }
 
 // Patch holds the fields an owner can change. A nil field is left as it is.
 // Lat and Lng must be set together.
 type Patch struct {
-	Name            *string
-	Address         *string
-	Lat, Lng        *float64
-	DeliveryRadiusM *int
-	AcceptingOrders *bool
+	Name             *string
+	Address          *string
+	Lat, Lng         *float64
+	DeliveryRadiusM  *int
+	DeliveryFeeKurus *int
+	MinBasketKurus   *int
+	AcceptingOrders  *bool
 }
 
 const (
 	MinDeliveryRadiusM     = 500
 	MaxDeliveryRadiusM     = 10_000
 	DefaultDeliveryRadiusM = 3_000
+
+	// Upper limits, matching the CHECKs in the database: 500 TL for delivery and
+	// 5,000 TL as a minimum basket are already far above any real restaurant.
+	MaxDeliveryFeeKurus = 50_000
+	MaxMinBasketKurus   = 500_000
 )
 
 // Istanbul's bounding box: the rectangle that contains the whole province. Points
@@ -75,12 +88,13 @@ func NewStore(pool *pgxpool.Pool) *Store {
 // one value; ST_Y and ST_X read its latitude and longitude back out.
 const columns = `id, owner_profile_id, name, address,
 	ST_Y(location::geometry), ST_X(location::geometry),
-	delivery_radius_m, accepting_orders, created_at, updated_at`
+	delivery_radius_m, delivery_fee_kurus, min_basket_kurus, accepting_orders,
+	created_at, updated_at`
 
 func scanRestaurant(row pgx.Row) (Restaurant, error) {
 	var r Restaurant
 	err := row.Scan(&r.ID, &r.OwnerProfileID, &r.Name, &r.Address, &r.Lat, &r.Lng,
-		&r.DeliveryRadiusM, &r.AcceptingOrders, &r.CreatedAt, &r.UpdatedAt)
+		&r.DeliveryRadiusM, &r.DeliveryFeeKurus, &r.MinBasketKurus, &r.AcceptingOrders, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
@@ -92,10 +106,12 @@ func point(latParam, lngParam string) string {
 
 func (s *Store) Create(ctx context.Context, ownerProfileID uuid.UUID, n New) (Restaurant, error) {
 	r, err := scanRestaurant(s.pool.QueryRow(ctx, `
-		INSERT INTO restaurants (id, owner_profile_id, name, address, location, delivery_radius_m)
-		VALUES ($1, $2, $3, $4, `+point("$5::float8", "$6::float8")+`, $7)
+		INSERT INTO restaurants (id, owner_profile_id, name, address, location, delivery_radius_m,
+			delivery_fee_kurus, min_basket_kurus)
+		VALUES ($1, $2, $3, $4, `+point("$5::float8", "$6::float8")+`, $7, $8, $9)
 		RETURNING `+columns,
 		uuid.Must(uuid.NewV7()), ownerProfileID, n.Name, n.Address, n.Lat, n.Lng, n.DeliveryRadiusM,
+		n.DeliveryFeeKurus, n.MinBasketKurus,
 	))
 	if err != nil {
 		return Restaurant{}, fmt.Errorf("insert restaurant: %w", err)
@@ -137,12 +153,15 @@ func (s *Store) Update(ctx context.Context, id, ownerProfileID uuid.UUID, p Patc
 			address           = COALESCE($4, address),
 			location          = CASE WHEN $5::float8 IS NULL THEN location
 			                         ELSE `+point("$5::float8", "$6::float8")+` END,
-			delivery_radius_m = COALESCE($7, delivery_radius_m),
-			accepting_orders  = COALESCE($8, accepting_orders),
-			updated_at        = now()
+			delivery_radius_m  = COALESCE($7, delivery_radius_m),
+			accepting_orders   = COALESCE($8, accepting_orders),
+			delivery_fee_kurus = COALESCE($9, delivery_fee_kurus),
+			min_basket_kurus   = COALESCE($10, min_basket_kurus),
+			updated_at         = now()
 		WHERE id = $1 AND owner_profile_id = $2
 		RETURNING `+columns,
 		id, ownerProfileID, p.Name, p.Address, p.Lat, p.Lng, p.DeliveryRadiusM, p.AcceptingOrders,
+		p.DeliveryFeeKurus, p.MinBasketKurus,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Restaurant{}, ErrNotFound

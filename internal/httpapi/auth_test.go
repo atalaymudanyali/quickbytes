@@ -10,7 +10,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
@@ -40,15 +42,19 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 		t.Fatal(err)
 	}
 	menuStore := menus.NewStore(pool)
+	menuCache := menus.NewCache(menuStore, rdb, time.Minute, discardLogger())
+	restaurantStore := restaurants.NewStore(pool)
 	srv := NewServer(Deps{
 		DB:          pool,
 		Users:       users.NewStore(pool),
 		Hasher:      auth.NewHasher(auth.FastParams),
 		Tokens:      tokens,
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
-		Restaurants: restaurants.NewStore(pool),
+		Restaurants: restaurantStore,
 		Menus:       menuStore,
-		MenuCache:   menus.NewCache(menuStore, rdb, time.Minute, discardLogger()),
+		Addresses:   addresses.NewStore(pool),
+		Carts:       carts.NewStore(pool, menuCache, restaurantStore),
+		MenuCache:   menuCache,
 		Logger:      discardLogger(),
 	})
 	return srv, validatedBySpec(t, srv.Routes())

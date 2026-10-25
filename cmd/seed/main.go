@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
@@ -86,6 +87,7 @@ func run(ctx context.Context, out io.Writer, reset bool) error {
 		Users:       users.NewStore(pool),
 		Restaurants: restaurants.NewStore(pool),
 		Menus:       menuStore,
+		Addresses:   addresses.NewStore(pool),
 		Hasher:      auth.NewHasher(auth.DefaultParams),
 		Password:    password,
 	}
@@ -102,6 +104,7 @@ func printReport(out io.Writer, d seed.Data, rep seed.Report) {
 	fmt.Fprintf(out, "Seeded Istanbul demo data.\n\n")
 	fmt.Fprintf(out, "               created  already there\n")
 	fmt.Fprintf(out, "  accounts     %7d  %13d\n", c.Accounts, e.Accounts)
+	fmt.Fprintf(out, "  addresses    %7d  %13d\n", c.Addresses, e.Addresses)
 	fmt.Fprintf(out, "  restaurants  %7d  %13d\n", c.Restaurants, e.Restaurants)
 	fmt.Fprintf(out, "  categories   %7d  %13d\n", c.Categories, e.Categories)
 	fmt.Fprintf(out, "  items        %7d  %13d\n", c.Items, e.Items)

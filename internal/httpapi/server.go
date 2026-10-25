@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -31,6 +33,8 @@ type Deps struct {
 	Refresh     *auth.RefreshStore
 	Restaurants *restaurants.Store
 	Menus       *menus.Store
+	Addresses   *addresses.Store
+	Carts       *carts.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
 	// from the database), but must not be nil.
 	MenuCache *menus.Cache
@@ -47,6 +51,8 @@ type Server struct {
 	refresh     *auth.RefreshStore
 	restaurants *restaurants.Store
 	menus       *menus.Store
+	addresses   *addresses.Store
+	carts       *carts.Store
 	menuCache   *menus.Cache
 	limiter     *ratelimit.Limiter
 	limits      limits
@@ -68,6 +74,8 @@ func NewServer(d Deps) *Server {
 		refresh:     d.Refresh,
 		restaurants: d.Restaurants,
 		menus:       d.Menus,
+		addresses:   d.Addresses,
+		carts:       d.Carts,
 		menuCache:   d.MenuCache,
 		limiter:     d.Limiter,
 		limits:      defaultLimits,
@@ -92,6 +100,10 @@ func (s *Server) routes() []route {
 	ownerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleRestaurant, h))
 	}
+	// Addresses (and the cart, later) belong to the customer profile.
+	customerOnly := func(h http.HandlerFunc) http.Handler {
+		return s.requireAuth(requireRole(users.RoleCustomer, h))
+	}
 
 	return []route{
 		{"GET /healthz", public(s.handleHealthz)},
@@ -103,6 +115,19 @@ func (s *Server) routes() []route {
 		{"POST /auth/logout", public(s.handleLogout)},
 		{"GET /me", loggedIn(s.handleMe)},
 		{"POST /me/profiles", loggedIn(s.handleAddProfile)},
+
+		// Delivery addresses: each customer sees only their own.
+		{"GET /me/addresses", customerOnly(s.handleListAddresses)},
+		{"POST /me/addresses", customerOnly(s.handleCreateAddress)},
+		{"PATCH /me/addresses/{address_id}", customerOnly(s.handleUpdateAddress)},
+		{"DELETE /me/addresses/{address_id}", customerOnly(s.handleDeleteAddress)},
+
+		// The cart: one per customer, priced live on every response.
+		{"GET /cart", customerOnly(s.handleGetCart)},
+		{"DELETE /cart", customerOnly(s.handleClearCart)},
+		{"POST /cart/items", customerOnly(s.handleAddToCart)},
+		{"PATCH /cart/items/{item_id}", customerOnly(s.handleChangeCartItem)},
+		{"DELETE /cart/items/{item_id}", customerOnly(s.handleRemoveCartItem)},
 
 		// Restaurants: browsing is public, managing is for owners.
 		{"GET /restaurants", public(s.handleNearbyRestaurants)},

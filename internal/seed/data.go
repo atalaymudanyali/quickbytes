@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -36,18 +37,31 @@ type Account struct {
 	FullName string `json:"full_name"`
 	// Every account gets a customer profile at sign-up. These are the others.
 	ExtraRoles []users.Role `json:"extra_roles"`
+	// Delivery addresses saved on the customer profile, found by label when
+	// seeding again.
+	Addresses []Address `json:"addresses,omitempty"`
+}
+
+type Address struct {
+	Label       string  `json:"label"`
+	AddressLine string  `json:"address_line"`
+	Details     string  `json:"details,omitempty"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
 }
 
 type Restaurant struct {
 	// Email of the account that owns it. That account needs a restaurant profile.
-	Owner           string     `json:"owner"`
-	Name            string     `json:"name"`
-	Address         string     `json:"address"`
-	Lat             float64    `json:"lat"`
-	Lng             float64    `json:"lng"`
-	DeliveryRadiusM int        `json:"delivery_radius_m"`
-	AcceptingOrders bool       `json:"accepting_orders"`
-	Categories      []Category `json:"categories"`
+	Owner            string     `json:"owner"`
+	Name             string     `json:"name"`
+	Address          string     `json:"address"`
+	Lat              float64    `json:"lat"`
+	Lng              float64    `json:"lng"`
+	DeliveryRadiusM  int        `json:"delivery_radius_m"`
+	DeliveryFeeKurus int        `json:"delivery_fee_kurus"`
+	MinBasketKurus   int        `json:"min_basket_kurus"`
+	AcceptingOrders  bool       `json:"accepting_orders"`
+	Categories       []Category `json:"categories"`
 }
 
 type Category struct {
@@ -129,6 +143,7 @@ func (d Data) Validate() error {
 				owners[a.Email] = true
 			}
 		}
+		validateAddresses("account "+a.Email, a.Addresses, bad)
 	}
 
 	names := map[string]bool{}
@@ -150,6 +165,12 @@ func (d Data) Validate() error {
 		if r.DeliveryRadiusM < restaurants.MinDeliveryRadiusM || r.DeliveryRadiusM > restaurants.MaxDeliveryRadiusM {
 			bad("%s: delivery radius must be %d to %d m", where,
 				restaurants.MinDeliveryRadiusM, restaurants.MaxDeliveryRadiusM)
+		}
+		if r.DeliveryFeeKurus < 0 || r.DeliveryFeeKurus > restaurants.MaxDeliveryFeeKurus {
+			bad("%s: delivery fee must be 0 to %d kuruş", where, restaurants.MaxDeliveryFeeKurus)
+		}
+		if r.MinBasketKurus < 0 || r.MinBasketKurus > restaurants.MaxMinBasketKurus {
+			bad("%s: minimum basket must be 0 to %d kuruş", where, restaurants.MaxMinBasketKurus)
 		}
 		if isOwner, ok := owners[r.Owner]; !ok {
 			bad("%s: owner %s is not in accounts", where, r.Owner)
@@ -244,4 +265,32 @@ func validateOptions(where string, groups []OptionGroup, bad func(string, ...any
 func lengthBetween(s string, lo, hi int) bool {
 	n := utf8.RuneCountInString(s)
 	return n >= lo && n <= hi
+}
+
+// validateAddresses applies the address API's rules, plus a label used only once
+// per account so that seeding again can find each address by it.
+func validateAddresses(where string, list []Address, bad func(string, ...any)) {
+	if len(list) > addresses.MaxPerCustomer {
+		bad("%s: at most %d addresses", where, addresses.MaxPerCustomer)
+	}
+	labels := map[string]bool{}
+	for _, a := range list {
+		at := where + ": address " + a.Label
+		if labels[a.Label] {
+			bad("%s: label used twice", at)
+		}
+		labels[a.Label] = true
+		if !lengthBetween(a.Label, 1, 30) {
+			bad("%s: label must be 1 to 30 characters", at)
+		}
+		if !lengthBetween(a.AddressLine, 1, 300) {
+			bad("%s: address line must be 1 to 300 characters", at)
+		}
+		if utf8.RuneCountInString(a.Details) > 200 {
+			bad("%s: details must be at most 200 characters", at)
+		}
+		if !restaurants.InIstanbul(a.Lat, a.Lng) {
+			bad("%s: %.4f,%.4f is outside Istanbul", at, a.Lat, a.Lng)
+		}
+	}
 }

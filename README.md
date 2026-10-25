@@ -12,8 +12,9 @@ side menu.
 
 > **Status:** phase 1 of 7 (foundation) is done: accounts, restaurants, menus,
 > caching, rate limits, API docs and Istanbul demo data. Phase 2 (orders and payments)
-> has started: dishes now have options, such as sizes and extras. See the
-> [roadmap](#roadmap).
+> has started: dishes have options (sizes, extras), and customers have saved
+> delivery addresses and a server-side cart priced live from the menu. Next:
+> checkout. See the [roadmap](#roadmap).
 
 ## Quick start
 
@@ -55,6 +56,16 @@ Phase 2 so far:
   "Ekstralar: up to 3"), each owner-set `min_picks` / `max_picks`, shown in the
   cached menu. One shared validator checks a customer's picks; the cart and
   checkout will reuse it.
+- **Delivery addresses:** customers save up to 10 (label, street address, details
+  such as floor and door, and a map pin). The limit holds even under simultaneous
+  requests: each save locks the customer's profile row first.
+- **Server-side cart:** one per customer in PostgreSQL, for one restaurant at a
+  time (a dish from another gets `409 cart_restaurant_mismatch`). The cart stores no
+  prices: every read works out the subtotal, the restaurant's delivery fee and the
+  total from the live (cached) menu, so a price change shows up at once. Dishes
+  that can no longer be ordered as they are stay in the cart, flagged, without a
+  price. The database itself keeps every line in the cart's restaurant: both of a
+  line's foreign keys share its `restaurant_id`.
 
 ## Measured
 
@@ -110,7 +121,9 @@ blocked attacker costs the server about 20 times less than a guess.
 
 `make seed` adds 13 restaurants across Kadıköy, Üsküdar, Beşiktaş, Şişli, Fatih and
 Beyoğlu, with real street coordinates and Turkish menus priced in kuruş (96 dishes,
-9 of them with options), plus demo accounts. Running it again only adds what's missing, so IDs stay the same.
+9 of them with options), each restaurant's delivery fee and minimum basket, and
+demo accounts with delivery addresses near them. Running it again only adds what's
+missing, so IDs stay the same.
 `make seed-reset` deletes the demo accounts and everything they own, then seeds
 fresh. Other accounts are never touched. Both refuse any database that isn't local.
 
@@ -119,9 +132,9 @@ Every demo account's password is **`quickbytes-demo`**. They live on the reserve
 
 | Account | Profiles |
 |---|---|
-| `musteri@demo.quickbytes.test` | customer |
-| `kurye@demo.quickbytes.test` | customer, driver |
-| `demo@demo.quickbytes.test` | customer, restaurant, driver (owns Kuzguncuk Fırını) |
+| `musteri@demo.quickbytes.test` | customer (addresses: Ev in Moda, İş in Mecidiyeköy) |
+| `kurye@demo.quickbytes.test` | customer, driver (Ev in Aksaray) |
+| `demo@demo.quickbytes.test` | customer, restaurant, driver (owns Kuzguncuk Fırını; Ev in Beşiktaş, Annem in Üsküdar) |
 | `hasan@demo.quickbytes.test` | customer, restaurant (two branches of Hasan Usta Kebap) |
 | `elif@`, `murat@`, `zeynep@demo.quickbytes.test` | customer, restaurant |
 
@@ -157,6 +170,12 @@ options include Nişantaşı Bistro's Burger (doneness, extras, a menu deal) and
 Fenerbahçe Dondurma's Maraş Dondurması (scoops, cone or cup, toppings); Hasan Usta
 Kadıköy's Kıymalı Pide has a switched-off extra.
 
+To fill a cart, log in as `musteri@`, find a dish's `id` and its choice IDs in a
+menu, and `POST /cart/items` with `{"menu_item_id": "...", "quantity": 2,
+"choice_ids": ["..."]}`. Every cart call answers with the whole cart, priced now.
+Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
+another tab, change the price of a dish in the cart, and `GET /cart` again.
+
 ### API documentation
 
 With the API running, open **http://localhost:8080/docs** for interactive docs
@@ -182,9 +201,18 @@ against it.
 | `POST /auth/logout` | Revoke the refresh token and all tokens issued from the same login. |
 | `GET /me` | The signed-in user and their profiles. Needs `Authorization: Bearer <token>`. |
 | `POST /me/profiles` | Add a `restaurant` or `driver` profile. Refresh afterwards to use it. |
+| `GET /me/addresses` | The signed-in customer's delivery addresses. |
+| `POST /me/addresses` | Save one: label, `address_line`, optional `details`, `lat`/`lng`. Up to 10 (`409 address_limit_reached`). |
+| `PATCH /me/addresses/{address_id}` | Change only the fields sent. Someone else's address gets 404. |
+| `DELETE /me/addresses/{address_id}` | Delete it. `204`. |
+| `GET /cart` | The customer's cart, priced from the live menu: lines with their options, subtotal, delivery fee, total, and how far below the restaurant's minimum basket it is. Lines that can't be ordered as they are carry a `problem` and no price. |
+| `POST /cart/items` | Add a dish: `{"menu_item_id", "quantity", "choice_ids"}`. The same dish with the same choices adds to that line. A dish from another restaurant gets `409 cart_restaurant_mismatch`. |
+| `PATCH /cart/items/{item_id}` | Change a line's `quantity` (1–20) or `choice_ids`. |
+| `DELETE /cart/items/{item_id}` | Take a line out; taking out the last one empties the cart. |
+| `DELETE /cart` | Empty the cart, e.g. to start one at another restaurant. `204`. |
 | `GET /restaurants?lat=…&lng=…` | Restaurants whose delivery zone covers that point, closest first. Public, paginated with `next_cursor`. |
 | `GET /restaurants/{id}` | One restaurant. Public. |
-| `POST /restaurants` | Create a restaurant (needs a restaurant profile). |
+| `POST /restaurants` | Create a restaurant (needs a restaurant profile), optionally with `delivery_fee_kurus` and `min_basket_kurus` (both default to 0). |
 | `PATCH /restaurants/{id}` | Change only the fields sent. Owner only; anyone else gets 404. |
 | `GET /me/restaurants` | The signed-in owner's restaurants. |
 | `GET /restaurants/{id}/menu` | A restaurant's menu: sections and dishes in the owner's order, each dish with its option groups and choices, sold-out dishes and switched-off choices marked `"available": false`, removed ones left out. Public. |
@@ -203,8 +231,9 @@ against it.
 | `DELETE /restaurants/{id}/menu/option-choices/{choice_id}` | Delete it. `204`. |
 
 Errors always look like
-`{"error": {"code": "...", "message": "...", "request_id": "..."}}`, and every
-response carries an `X-Request-ID` header that matches the server's log line.
+`{"error": {"code": "...", "message": "...", "request_id": "..."}}` (option-picking
+errors add the `group_id` or `choice_id` they're about), and every response carries
+an `X-Request-ID` header that matches the server's log line.
 
 </details>
 

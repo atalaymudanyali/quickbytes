@@ -81,7 +81,7 @@ func (s *Store) Near(ctx context.Context, lat, lng float64, limit int, after *Cu
 	found, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Nearby, error) {
 		var n Nearby
 		err := row.Scan(&n.ID, &n.OwnerProfileID, &n.Name, &n.Address, &n.Lat, &n.Lng,
-			&n.DeliveryRadiusM, &n.AcceptingOrders, &n.CreatedAt, &n.UpdatedAt, &n.DistanceM)
+			&n.DeliveryRadiusM, &n.DeliveryFeeKurus, &n.MinBasketKurus, &n.AcceptingOrders, &n.CreatedAt, &n.UpdatedAt, &n.DistanceM)
 		return n, err
 	})
 	if err != nil {
