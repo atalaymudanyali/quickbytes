@@ -79,6 +79,7 @@ func run(logger *slog.Logger) error {
 	addressStore := addresses.NewStore(pool)
 	// The cart prices from the same menu cache that serves public menus.
 	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
+	orderStore := orders.NewStore(pool, cartStore, addressStore)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
@@ -97,13 +98,17 @@ func run(logger *slog.Logger) error {
 			Menus:       menuStore,
 			Addresses:   addressStore,
 			Carts:       cartStore,
-			Orders:      orders.NewStore(pool, cartStore, addressStore),
+			Orders:      orderStore,
 			MenuCache:   menuCache,
 			Limiter:     ratelimit.New(redisClient, logger),
 			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	// Unpaid orders are cancelled after the pay window. The loop stops with ctx,
+	// on shutdown.
+	go orderStore.RunExpiry(ctx, cfg.OrderExpiryEvery, cfg.OrderPayWindow, logger)
 
 	errCh := make(chan error, 1)
 	go func() {
