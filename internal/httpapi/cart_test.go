@@ -22,7 +22,12 @@ type cartFixture struct {
 
 func newCartFixture(t *testing.T) cartFixture {
 	t.Helper()
-	f := cartFixture{menuFixture: newMenuFixture(t)}
+	return newCartFixtureWith(t, newAuthTestHandler(t))
+}
+
+func newCartFixtureWith(t *testing.T, h http.Handler) cartFixture {
+	t.Helper()
+	f := cartFixture{menuFixture: newMenuFixtureWith(t, h)}
 	f.restaurantPath = strings.TrimSuffix(f.base, "/menu")
 	if rec := send(t, f.h, http.MethodPatch, f.restaurantPath, f.owner,
 		`{"delivery_fee_kurus": 2990, "min_basket_kurus": 30000}`); rec.Code != http.StatusOK {

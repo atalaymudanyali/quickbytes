@@ -21,6 +21,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -75,6 +76,9 @@ func run(logger *slog.Logger) error {
 	menuStore := menus.NewStore(pool)
 	menuCache := menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger)
 	restaurantStore := restaurants.NewStore(pool)
+	addressStore := addresses.NewStore(pool)
+	// The cart prices from the same menu cache that serves public menus.
+	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
@@ -91,12 +95,12 @@ func run(logger *slog.Logger) error {
 			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
 			Restaurants: restaurantStore,
 			Menus:       menuStore,
-			Addresses:   addresses.NewStore(pool),
-			// The cart prices from the same menu cache that serves public menus.
-			Carts:     carts.NewStore(pool, menuCache, restaurantStore),
-			MenuCache: menuCache,
-			Limiter:   ratelimit.New(redisClient, logger),
-			Logger:    logger,
+			Addresses:   addressStore,
+			Carts:       cartStore,
+			Orders:      orders.NewStore(pool, cartStore, addressStore),
+			MenuCache:   menuCache,
+			Limiter:     ratelimit.New(redisClient, logger),
+			Logger:      logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

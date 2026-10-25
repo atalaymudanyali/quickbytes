@@ -388,3 +388,43 @@ func TestOnlyTheOrdersPeopleCanReadIt(t *testing.T) {
 		}
 	}
 }
+
+func TestListAndHistory(t *testing.T) {
+	f := setup(t)
+	s, me := f.newShop(t), f.newShopper(t)
+	ctx := context.Background()
+
+	var placed []Order
+	for range 2 {
+		f.fullCart(t, s, me)
+		o, err := f.orders.Place(ctx, me.ProfileID, me.home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		placed = append(placed, o)
+	}
+	f.newShopper(t) // someone else, with no orders
+
+	list, err := f.orders.ListForCustomer(ctx, me.ProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != placed[1].ID || list[1].ID != placed[0].ID {
+		t.Fatalf("got %d orders; want both, newest first", len(list))
+	}
+	if !reflect.DeepEqual(list[1], placed[0]) {
+		t.Fatalf("listed order differs from the placed one:\n%+v\nwant\n%+v", list[1], placed[0])
+	}
+
+	if _, err := f.orders.Transition(ctx, placed[0].ID, Cancel, me.Actor); err != nil {
+		t.Fatal(err)
+	}
+	h, err := f.orders.History(ctx, placed[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h) != 2 || h[0].From != nil || h[0].To != Placed || h[0].By != "customer" ||
+		*h[1].From != Placed || h[1].To != Cancelled || *h[1].CancelReason != ByCustomer {
+		t.Fatalf("history %+v; want placed, then placed → cancelled (by_customer)", h)
+	}
+}

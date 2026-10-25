@@ -14,6 +14,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
+	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -44,6 +45,8 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 	menuStore := menus.NewStore(pool)
 	menuCache := menus.NewCache(menuStore, rdb, time.Minute, discardLogger())
 	restaurantStore := restaurants.NewStore(pool)
+	addressStore := addresses.NewStore(pool)
+	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
 	srv := NewServer(Deps{
 		DB:          pool,
 		Users:       users.NewStore(pool),
@@ -52,8 +55,9 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
 		Restaurants: restaurantStore,
 		Menus:       menuStore,
-		Addresses:   addresses.NewStore(pool),
-		Carts:       carts.NewStore(pool, menuCache, restaurantStore),
+		Addresses:   addressStore,
+		Carts:       cartStore,
+		Orders:      orders.NewStore(pool, cartStore, addressStore),
 		MenuCache:   menuCache,
 		Logger:      discardLogger(),
 	})
