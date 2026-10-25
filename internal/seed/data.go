@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -36,6 +37,17 @@ type Account struct {
 	FullName string `json:"full_name"`
 	// Every account gets a customer profile at sign-up. These are the others.
 	ExtraRoles []users.Role `json:"extra_roles"`
+	// Delivery addresses saved on the customer profile, found by label when
+	// seeding again.
+	Addresses []Address `json:"addresses,omitempty"`
+}
+
+type Address struct {
+	Label       string  `json:"label"`
+	AddressLine string  `json:"address_line"`
+	Details     string  `json:"details,omitempty"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
 }
 
 type Restaurant struct {
@@ -131,6 +143,7 @@ func (d Data) Validate() error {
 				owners[a.Email] = true
 			}
 		}
+		validateAddresses("account "+a.Email, a.Addresses, bad)
 	}
 
 	names := map[string]bool{}
@@ -252,4 +265,32 @@ func validateOptions(where string, groups []OptionGroup, bad func(string, ...any
 func lengthBetween(s string, lo, hi int) bool {
 	n := utf8.RuneCountInString(s)
 	return n >= lo && n <= hi
+}
+
+// validateAddresses applies the address API's rules, plus a label used only once
+// per account so that seeding again can find each address by it.
+func validateAddresses(where string, list []Address, bad func(string, ...any)) {
+	if len(list) > addresses.MaxPerCustomer {
+		bad("%s: at most %d addresses", where, addresses.MaxPerCustomer)
+	}
+	labels := map[string]bool{}
+	for _, a := range list {
+		at := where + ": address " + a.Label
+		if labels[a.Label] {
+			bad("%s: label used twice", at)
+		}
+		labels[a.Label] = true
+		if !lengthBetween(a.Label, 1, 30) {
+			bad("%s: label must be 1 to 30 characters", at)
+		}
+		if !lengthBetween(a.AddressLine, 1, 300) {
+			bad("%s: address line must be 1 to 300 characters", at)
+		}
+		if utf8.RuneCountInString(a.Details) > 200 {
+			bad("%s: details must be at most 200 characters", at)
+		}
+		if !restaurants.InIstanbul(a.Lat, a.Lng) {
+			bad("%s: %.4f,%.4f is outside Istanbul", at, a.Lat, a.Lng)
+		}
+	}
 }

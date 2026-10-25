@@ -72,7 +72,9 @@ func has(roles []users.Role, r users.Role) bool {
 const valid = `{
   "accounts": [
     {"email": "owner@demo.quickbytes.test", "full_name": "Owner", "extra_roles": ["restaurant"]},
-    {"email": "eater@demo.quickbytes.test", "full_name": "Eater", "extra_roles": []}
+    {"email": "eater@demo.quickbytes.test", "full_name": "Eater", "extra_roles": [], "addresses": [
+      {"label": "Ev", "address_line": "Moda Cd. 40", "lat": 40.984, "lng": 29.027}
+    ]}
   ],
   "restaurants": [{
     "owner": "owner@demo.quickbytes.test", "name": "Test Kebap", "address": "Moda Cd. 1",
@@ -102,6 +104,9 @@ func TestParse(t *testing.T) {
 		{"minimum basket too big", `"min_basket_kurus": 25000`, `"min_basket_kurus": 9999999`, "minimum basket must be"},
 		{"owner without restaurant profile", `"owner": "owner@`, `"owner": "eater@`, "has no restaurant profile"},
 		{"unknown owner", `"owner": "owner@`, `"owner": "nobody@`, "not in accounts"},
+		{"address outside Istanbul", `"lat": 40.984, "lng": 29.027`, `"lat": 0, "lng": 0`, "is outside Istanbul"},
+		{"address label used twice", `{"label": "Ev", "address_line": "Moda Cd. 40", "lat": 40.984, "lng": 29.027}`,
+			`{"label": "Ev", "address_line": "Moda Cd. 40", "lat": 40.984, "lng": 29.027}, {"label": "Ev", "address_line": "Moda Cd. 41", "lat": 40.984, "lng": 29.027}`, "label used twice"},
 		{"customer as extra role", `"extra_roles": []`, `"extra_roles": ["customer"]`, "must be restaurant or driver"},
 		{"empty category", `"items": [
       {"name": "Adana", "description": "", "price_kurus": 45000, "options": [

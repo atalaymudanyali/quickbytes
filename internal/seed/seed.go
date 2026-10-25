@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -21,6 +22,7 @@ type Seeder struct {
 	Users       *users.Store
 	Restaurants *restaurants.Store
 	Menus       *menus.Store
+	Addresses   *addresses.Store
 	Hasher      *auth.Hasher
 	// Password is given to every account the seeder creates.
 	Password string
@@ -28,7 +30,7 @@ type Seeder struct {
 
 // Counts says how many things of each kind a run created, or found already there.
 type Counts struct {
-	Accounts, Restaurants, Categories, Items, OptionGroups, OptionChoices int
+	Accounts, Addresses, Restaurants, Categories, Items, OptionGroups, OptionChoices int
 }
 
 type Report struct {
@@ -38,7 +40,7 @@ type Report struct {
 
 // Run creates whatever in d is missing and leaves the rest alone, so running it
 // again changes nothing and every ID stays the same. Things are found by their
-// natural key: accounts by email, restaurants by owner and name, categories and
+// natural key: accounts by email, addresses by label within their account, restaurants by owner and name, categories and
 // items by name within their restaurant, option groups by name within their item,
 // and choices by name within their group.
 func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
@@ -64,6 +66,9 @@ func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
 			if role == users.RoleRestaurant {
 				owners[a.Email] = p.ID
 			}
+		}
+		if err := s.addresses(ctx, u.ID, a.Addresses, &rep); err != nil {
+			return rep, fmt.Errorf("account %s: %w", a.Email, err)
 		}
 	}
 
@@ -108,6 +113,40 @@ func (s *Seeder) profile(ctx context.Context, userID uuid.UUID, role users.Role)
 		return s.Users.AddProfile(ctx, userID, role)
 	}
 	return p, err
+}
+
+// addresses saves the account's missing delivery addresses on its customer
+// profile, the one every account gets at sign-up.
+func (s *Seeder) addresses(ctx context.Context, userID uuid.UUID, want []Address, rep *Report) error {
+	if len(want) == 0 {
+		return nil
+	}
+	customer, err := s.Users.ProfileByRole(ctx, userID, users.RoleCustomer)
+	if err != nil {
+		return err
+	}
+	saved, err := s.Addresses.List(ctx, customer.ID)
+	if err != nil {
+		return err
+	}
+	labels := map[string]bool{}
+	for _, a := range saved {
+		labels[a.Label] = true
+	}
+	for _, a := range want {
+		if labels[a.Label] {
+			rep.Existing.Addresses++
+			continue
+		}
+		_, err := s.Addresses.Create(ctx, customer.ID, addresses.New{
+			Label: a.Label, AddressLine: a.AddressLine, Details: a.Details, Lat: a.Lat, Lng: a.Lng,
+		})
+		if err != nil {
+			return fmt.Errorf("address %s: %w", a.Label, err)
+		}
+		rep.Created.Addresses++
+	}
+	return nil
 }
 
 func (s *Seeder) restaurant(ctx context.Context, owner uuid.UUID, r Restaurant, rep *Report) (restaurants.Restaurant, error) {

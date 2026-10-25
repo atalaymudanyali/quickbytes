@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -29,7 +30,7 @@ func TestRunTwice(t *testing.T) {
 	}
 	hasher := auth.NewHasher(auth.FastParams)
 	userStore, restaurantStore, menuStore := users.NewStore(pool), restaurants.NewStore(pool), menus.NewStore(pool)
-	s := &seed.Seeder{Users: userStore, Restaurants: restaurantStore, Menus: menuStore, Hasher: hasher, Password: password}
+	s := &seed.Seeder{Users: userStore, Restaurants: restaurantStore, Menus: menuStore, Addresses: addresses.NewStore(pool), Hasher: hasher, Password: password}
 
 	first, err := s.Run(ctx, data)
 	if err != nil {
@@ -44,6 +45,9 @@ func TestRunTwice(t *testing.T) {
 		t.Errorf("second run created %+v, want nothing", second.Created)
 	}
 	all := seed.Counts{Accounts: len(data.Accounts), Restaurants: len(data.Restaurants)}
+	for _, a := range data.Accounts {
+		all.Addresses += len(a.Addresses)
+	}
 	for _, r := range data.Restaurants {
 		all.Categories += len(r.Categories)
 		for _, c := range r.Categories {
@@ -122,7 +126,7 @@ func TestSeededOptions(t *testing.T) {
 	}
 	menuStore := menus.NewStore(pool)
 	s := &seed.Seeder{Users: users.NewStore(pool), Restaurants: restaurants.NewStore(pool), Menus: menuStore,
-		Hasher: auth.NewHasher(auth.FastParams), Password: password}
+		Addresses: addresses.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password}
 	rep, err := s.Run(ctx, data)
 	if err != nil {
 		t.Fatal(err)
