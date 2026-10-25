@@ -120,6 +120,21 @@ func (s *Store) List(ctx context.Context, customerProfileID uuid.UUID) ([]Addres
 	})
 }
 
+// Get returns one of the customer's addresses. Someone else's address is
+// ErrNotFound, the same as a missing one.
+func (s *Store) Get(ctx context.Context, id, customerProfileID uuid.UUID) (Address, error) {
+	a, err := scanAddress(s.pool.QueryRow(ctx, `
+		SELECT `+columns+` FROM addresses
+		WHERE id = $1 AND customer_profile_id = $2`, id, customerProfileID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Address{}, ErrNotFound
+	}
+	if err != nil {
+		return Address{}, fmt.Errorf("get address: %w", err)
+	}
+	return a, nil
+}
+
 // Update applies a patch to one of the customer's addresses. Like restaurants,
 // the owner is part of the WHERE, so "is it yours?" and "change it" are one step.
 func (s *Store) Update(ctx context.Context, id, customerProfileID uuid.UUID, p Patch) (Address, error) {
@@ -144,8 +159,8 @@ func (s *Store) Update(ctx context.Context, id, customerProfileID uuid.UUID, p P
 	return a, nil
 }
 
-// Delete removes one of the customer's addresses. Orders (issue #17) will copy
-// the address they were sent to, so deleting it later never changes an order.
+// Delete removes one of the customer's addresses. Orders copy the address they
+// were sent to, so deleting it later never changes an order.
 func (s *Store) Delete(ctx context.Context, id, customerProfileID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM addresses WHERE id = $1 AND customer_profile_id = $2`,
 		id, customerProfileID)

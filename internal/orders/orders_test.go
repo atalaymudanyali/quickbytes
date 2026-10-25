@@ -3,12 +3,17 @@ package orders
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
+	"github.com/atalaymudanyali/quickbytes/internal/carts"
+	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -19,12 +24,23 @@ type fixture struct {
 	orders      *Store
 	users       *users.Store
 	restaurants *restaurants.Store
+	menus       *menus.Store
+	carts       *carts.Store
+	addresses   *addresses.Store
 }
 
 func setup(t *testing.T) fixture {
 	t.Helper()
 	pool := testutil.DB(t)
-	return fixture{pool: pool, orders: NewStore(pool), users: users.NewStore(pool), restaurants: restaurants.NewStore(pool)}
+	m, r, a := menus.NewStore(pool), restaurants.NewStore(pool), addresses.NewStore(pool)
+	// No Redis: the cache then reads every menu straight from the database, so a
+	// menu change shows up in the next cart read.
+	cache := menus.NewCache(m, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := carts.NewStore(pool, cache, r)
+	return fixture{
+		pool: pool, orders: NewStore(pool, c, a), users: users.NewStore(pool),
+		restaurants: r, menus: m, carts: c, addresses: a,
+	}
 }
 
 // people is one order's cast: its customer, the owner of its restaurant, and a

@@ -86,13 +86,20 @@ func TestLimitHoldsUnderConcurrentCreates(t *testing.T) {
 	}
 }
 
-func TestUpdateAndDeleteOnlyYourOwn(t *testing.T) {
+func TestGetUpdateAndDeleteOnlyYourOwn(t *testing.T) {
 	pool := testutil.DB(t)
 	store, ctx := addresses.NewStore(pool), context.Background()
 	me, other := newCustomer(t, users.NewStore(pool)), newCustomer(t, users.NewStore(pool))
 	a, err := store.Create(ctx, me, home)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if got, err := store.Get(ctx, a.ID, me); err != nil || got != a {
+		t.Fatalf("get = %+v, %v; want %+v", got, err, a)
+	}
+	if _, err := store.Get(ctx, a.ID, other); !errors.Is(err, addresses.ErrNotFound) {
+		t.Fatalf("someone else's get: err = %v, want ErrNotFound", err)
 	}
 
 	work := "İş"

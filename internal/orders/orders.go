@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
+	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
 
@@ -120,11 +122,13 @@ func next(from Status, a Action, by users.Role) (Status, CancelReason, error) {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool      *pgxpool.Pool
+	carts     *carts.Store
+	addresses *addresses.Store
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func NewStore(pool *pgxpool.Pool, c *carts.Store, a *addresses.Store) *Store {
+	return &Store{pool: pool, carts: c, addresses: a}
 }
 
 // Change is one move that happened.
