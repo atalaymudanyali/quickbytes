@@ -29,6 +29,8 @@ tags:
     description: Sign up, log in, and keep a session going.
   - name: profiles
     description: The roles a user can play (customer, restaurant owner, driver).
+  - name: addresses
+    description: A customer's saved delivery addresses.
   - name: restaurants
     description: Finding and managing restaurants.
   - name: menus
@@ -267,6 +269,107 @@ paths:
         "413": { $ref: "#/components/responses/BodyTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /me/addresses:
+    get:
+      tags: [addresses]
+      operationId: listMyAddresses
+      summary: The signed-in customer's delivery addresses
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The customer's addresses, oldest first.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [addresses]
+                properties:
+                  addresses:
+                    type: array
+                    items: { $ref: "#/components/schemas/Address" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+    post:
+      tags: [addresses]
+      operationId: createAddress
+      summary: Save a delivery address
+      description: |
+        The app sends the text and the map pin together: turning text into
+        coordinates would need a paid service. A customer can save up to 10.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressCreate" }
+      responses:
+        "201":
+          description: Saved.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Address" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "409":
+          description: Already 10 addresses saved (code `address_limit_reached`). Delete one first.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /me/addresses/{address_id}:
+    parameters:
+      - $ref: "#/components/parameters/AddressID"
+    patch:
+      tags: [addresses]
+      operationId: updateAddress
+      summary: Change a delivery address
+      description: Only the fields sent are changed. `lat` and `lng` must be sent together.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressPatch" }
+      responses:
+        "200":
+          description: The updated address.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Address" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/AddressNotFound" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      tags: [addresses]
+      operationId: deleteAddress
+      summary: Delete a delivery address
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/AddressNotFound" }
 
   /restaurants:
     get:
@@ -924,6 +1027,12 @@ components:
       schema: { type: string, example: '"menu2-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
 
   parameters:
+    AddressID:
+      name: address_id
+      in: path
+      required: true
+      description: The address's ID. Anything that isn't a UUID gets a 404.
+      schema: { type: string }
     RestaurantID:
       name: id
       in: path
@@ -1025,6 +1134,13 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     RestaurantNotFound:
       description: No such restaurant, or not yours where ownership matters; the two look the same on purpose (code `restaurant_not_found`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AddressNotFound:
+      description: No such address, or another customer's; the two look the same on purpose (code `address_not_found`).
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
       content:
@@ -1176,6 +1292,62 @@ components:
       maximum: 29.95
       description: Longitude (east–west), inside Istanbul.
       example: 29.0233
+
+    Address:
+      type: object
+      required: [id, label, address_line, details, lat, lng, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        label: { $ref: "#/components/schemas/AddressLabel" }
+        address_line: { $ref: "#/components/schemas/AddressLine" }
+        details: { $ref: "#/components/schemas/AddressDetails" }
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AddressCreate:
+      type: object
+      additionalProperties: false
+      required: [label, address_line, lat, lng]
+      properties:
+        label: { $ref: "#/components/schemas/AddressLabel" }
+        address_line: { $ref: "#/components/schemas/AddressLine" }
+        details:
+          allOf: [{ $ref: "#/components/schemas/AddressDetails" }]
+          default: ""
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+
+    AddressPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Send only what changes. `lat` and `lng` go together.
+      properties:
+        label: { $ref: "#/components/schemas/AddressLabel" }
+        address_line: { $ref: "#/components/schemas/AddressLine" }
+        details: { $ref: "#/components/schemas/AddressDetails" }
+        lat: { $ref: "#/components/schemas/Latitude" }
+        lng: { $ref: "#/components/schemas/Longitude" }
+
+    AddressLabel:
+      type: string
+      minLength: 1
+      maxLength: 30
+      description: The customer's own name for it.
+      example: Ev
+    AddressLine:
+      type: string
+      minLength: 1
+      maxLength: 300
+      description: The street address, for the courier to read.
+      example: "Caferağa Mh., Moda Cd. No:40, Kadıköy"
+    AddressDetails:
+      type: string
+      maxLength: 200
+      description: What a map can't show, such as building, floor, door or "ring twice". May be empty.
+      example: "Kat 3, daire 7"
 
     Restaurant:
       type: object

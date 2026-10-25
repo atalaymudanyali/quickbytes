@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/config"
@@ -87,6 +88,7 @@ func run(logger *slog.Logger) error {
 			Refresh:     auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
 			Restaurants: restaurants.NewStore(pool),
 			Menus:       menuStore,
+			Addresses:   addresses.NewStore(pool),
 			MenuCache:   menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger),
 			Limiter:     ratelimit.New(redisClient, logger),
 			Logger:      logger,

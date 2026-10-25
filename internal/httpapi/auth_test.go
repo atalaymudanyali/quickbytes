@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -48,6 +49,7 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 		Refresh:     auth.NewRefreshStore(pool, time.Hour),
 		Restaurants: restaurants.NewStore(pool),
 		Menus:       menuStore,
+		Addresses:   addresses.NewStore(pool),
 		MenuCache:   menus.NewCache(menuStore, rdb, time.Minute, discardLogger()),
 		Logger:      discardLogger(),
 	})
