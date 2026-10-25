@@ -163,3 +163,55 @@ func writeOrderNotFound(w http.ResponseWriter, r *http.Request) {
 func lira(kurus int) string {
 	return fmt.Sprintf("%d,%02d TL", kurus/100, kurus%100)
 }
+
+// --- The restaurant's side ------------------------------------------------------
+
+// handleKitchenOrders lists a restaurant's paid, accepted and ready orders,
+// oldest first: the queue the kitchen works through.
+func (s *Server) handleKitchenOrders(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantID(w, r)
+	if !ok {
+		return
+	}
+	owner, ok := s.restaurantProfile(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.orders.ListForKitchen(r.Context(), restaurantID, owner)
+	if errors.Is(err, orders.ErrRestaurantNotFound) {
+		writeError(w, r, http.StatusNotFound, "restaurant_not_found", "no such restaurant")
+		return
+	}
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, orderList{Orders: list})
+}
+
+func (s *Server) handleAcceptOrder(w http.ResponseWriter, r *http.Request) {
+	s.restaurantMove(w, r, orders.Accept, "only a paid order can be accepted")
+}
+
+func (s *Server) handleRejectOrder(w http.ResponseWriter, r *http.Request) {
+	s.restaurantMove(w, r, orders.Reject, "only a paid or accepted order can be rejected")
+}
+
+func (s *Server) handleOrderReady(w http.ResponseWriter, r *http.Request) {
+	s.restaurantMove(w, r, orders.MarkReady, "only an accepted order can be marked ready")
+}
+
+// restaurantMove is one of the restaurant's buttons on an order. The owner check
+// happens inside the move, with the order locked: an order of a restaurant you
+// don't own is 404, like any order that isn't yours.
+func (s *Server) restaurantMove(w http.ResponseWriter, r *http.Request, a orders.Action, refused string) {
+	id, ok := orderID(w, r)
+	if !ok {
+		return
+	}
+	owner, ok := s.restaurantProfile(w, r)
+	if !ok {
+		return
+	}
+	s.moveOrder(w, r, id, a, orders.Actor{Role: users.RoleRestaurant, ProfileID: owner}, refused)
+}

@@ -194,3 +194,119 @@ func TestOrdersArePrivate(t *testing.T) {
 		t.Errorf("status = %s; strangers' attempts changed the order", s)
 	}
 }
+
+// placePaid checks a full cart out and plays the payment arriving, so the order
+// is where the restaurant's buttons start.
+func (f orderFixture) placePaid(t *testing.T, token, addressID string) orderDetail {
+	t.Helper()
+	f.fill(t, token)
+	o := decode[orderDetail](t, f.checkout(t, token, addressID), http.StatusCreated)
+	if _, err := f.srv.orders.Transition(context.Background(), o.ID, orders.Pay, orders.System); err != nil {
+		t.Fatal(err)
+	}
+	return o
+}
+
+func (f orderFixture) kitchen(t *testing.T, token string) []orders.Order {
+	t.Helper()
+	return decode[orderList](t, send(t, f.h, http.MethodGet, "/me"+f.restaurantPath+"/orders", token, ""), http.StatusOK).Orders
+}
+
+func TestRestaurantWorksThroughAnOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+
+	// Unpaid orders don't reach the kitchen.
+	f.fill(t, me)
+	decode[orderDetail](t, f.checkout(t, me, home), http.StatusCreated)
+	if got := f.kitchen(t, f.owner); len(got) != 0 {
+		t.Fatalf("kitchen shows %d orders before any is paid, want 0", len(got))
+	}
+
+	o := f.placePaid(t, me, home)
+	if got := f.kitchen(t, f.owner); len(got) != 1 || got[0].ID != o.ID || len(got[0].Items) != 2 {
+		t.Fatalf("kitchen = %+v, want the paid order with its 2 dishes", got)
+	}
+	path := "/orders/" + o.ID.String()
+
+	accepted := decode[orderDetail](t, send(t, f.h, http.MethodPost, path+"/accept", f.owner, ""), http.StatusOK)
+	if accepted.Status != orders.Accepted {
+		t.Fatalf("after accept: %s", accepted.Status)
+	}
+	// Too late for the customer to cancel now.
+	if rec := send(t, f.h, http.MethodPost, path+"/cancel", me, ""); rec.Code != http.StatusConflict {
+		t.Fatalf("customer cancel after accept: %d, want 409", rec.Code)
+	}
+
+	ready := decode[orderDetail](t, send(t, f.h, http.MethodPost, path+"/ready", f.owner, ""), http.StatusOK)
+	var trail []string
+	for _, h := range ready.History {
+		trail = append(trail, string(h.To)+" by "+h.By)
+	}
+	if want := "placed by customer, paid by system, accepted by restaurant, ready by restaurant"; strings.Join(trail, ", ") != want {
+		t.Fatalf("history: %s\nwant:    %s", strings.Join(trail, ", "), want)
+	}
+
+	for _, button := range []string{"/accept", "/reject", "/ready"} {
+		rec := send(t, f.h, http.MethodPost, path+button, f.owner, "")
+		if e := decodeError(t, rec); rec.Code != http.StatusConflict || e.Code != "invalid_transition" {
+			t.Errorf("%s on a ready order: %d %s, want 409 invalid_transition", button, rec.Code, e.Code)
+		}
+	}
+}
+
+func TestRestaurantRejects(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+
+	for _, acceptFirst := range []bool{false, true} {
+		o := f.placePaid(t, me, home)
+		path := "/orders/" + o.ID.String()
+		if acceptFirst {
+			decode[orderDetail](t, send(t, f.h, http.MethodPost, path+"/accept", f.owner, ""), http.StatusOK)
+		}
+		r := decode[orderDetail](t, send(t, f.h, http.MethodPost, path+"/reject", f.owner, ""), http.StatusOK)
+		if r.Status != orders.Cancelled || *r.CancelReason != orders.Rejected {
+			t.Fatalf("reject (accepted first: %v): %s %v, want cancelled (rejected)", acceptFirst, r.Status, r.CancelReason)
+		}
+	}
+	if got := f.kitchen(t, f.owner); len(got) != 0 {
+		t.Fatalf("rejected orders still in the kitchen list: %d", len(got))
+	}
+
+	// An unpaid order can't be accepted or rejected yet.
+	f.fill(t, me)
+	unpaid := decode[orderDetail](t, f.checkout(t, me, home), http.StatusCreated)
+	if rec := send(t, f.h, http.MethodPost, "/orders/"+unpaid.ID.String()+"/accept", f.owner, ""); rec.Code != http.StatusConflict {
+		t.Fatalf("accept an unpaid order: %d, want 409", rec.Code)
+	}
+}
+
+// A restaurant can't touch another restaurant's orders, and a customer can't
+// press the restaurant's buttons.
+func TestRestaurantButtonsAreForTheOwner(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+	o := f.placePaid(t, me, home)
+	path := "/orders/" + o.ID.String()
+
+	otherOwner := ownerToken(t, f.h)
+	createRestaurant(t, f.h, otherOwner, ciyaBody)
+	for _, button := range []string{"/accept", "/reject", "/ready"} {
+		rec := send(t, f.h, http.MethodPost, path+button, otherOwner, "")
+		if e := decodeError(t, rec); rec.Code != http.StatusNotFound || e.Code != "order_not_found" {
+			t.Errorf("another restaurant %s: %d %s, want 404 order_not_found", button, rec.Code, e.Code)
+		}
+		rec = send(t, f.h, http.MethodPost, path+button, me, "")
+		if e := decodeError(t, rec); rec.Code != http.StatusForbidden || e.Code != "profile_required" {
+			t.Errorf("the customer %s: %d %s, want 403 profile_required", button, rec.Code, e.Code)
+		}
+	}
+	rec := send(t, f.h, http.MethodGet, "/me"+f.restaurantPath+"/orders", otherOwner, "")
+	if e := decodeError(t, rec); rec.Code != http.StatusNotFound || e.Code != "restaurant_not_found" {
+		t.Errorf("another owner reading the kitchen list: %d %s, want 404 restaurant_not_found", rec.Code, e.Code)
+	}
+	if s := decode[orderDetail](t, send(t, f.h, http.MethodGet, path, me, ""), http.StatusOK).Status; s != orders.Paid {
+		t.Errorf("status = %s; strangers' attempts changed the order", s)
+	}
+}

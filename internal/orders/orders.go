@@ -90,13 +90,16 @@ type rule struct {
 //	placed → paid → accepted → ready → picked_up → delivered
 //	   │       │        │
 //	   └───────┴────────┴──→ cancelled (with a reason)
+//
+// A restaurant may reject an order it already accepted ("we ran out after
+// all"); the payment flow then refunds instead of releasing the hold (#20).
 var rules = map[Action]rule{
 	Pay:         {from: []Status{Placed}, to: Paid, by: RoleSystem},
 	FailPayment: {from: []Status{Placed}, to: Cancelled, reason: PaymentFailed, by: RoleSystem},
 	Expire:      {from: []Status{Placed}, to: Cancelled, reason: Expired, by: RoleSystem},
 	Cancel:      {from: []Status{Placed, Paid}, to: Cancelled, reason: ByCustomer, by: users.RoleCustomer},
 	Accept:      {from: []Status{Paid}, to: Accepted, by: users.RoleRestaurant},
-	Reject:      {from: []Status{Paid}, to: Cancelled, reason: Rejected, by: users.RoleRestaurant},
+	Reject:      {from: []Status{Paid, Accepted}, to: Cancelled, reason: Rejected, by: users.RoleRestaurant},
 	MarkReady:   {from: []Status{Accepted}, to: Ready, by: users.RoleRestaurant},
 	PickUp:      {from: []Status{Ready}, to: PickedUp, by: users.RoleDriver},
 	Deliver:     {from: []Status{PickedUp}, to: Delivered, by: users.RoleDriver},

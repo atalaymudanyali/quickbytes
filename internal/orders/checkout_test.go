@@ -428,3 +428,50 @@ func TestListAndHistory(t *testing.T) {
 		t.Fatalf("history %+v; want placed, then placed → cancelled (by_customer)", h)
 	}
 }
+
+func TestKitchenList(t *testing.T) {
+	f := setup(t)
+	s, me := f.newShop(t), f.newShopper(t)
+	ctx := context.Background()
+	owner := Actor{Role: users.RoleRestaurant, ProfileID: s.owner}
+
+	place := func() Order {
+		t.Helper()
+		f.fullCart(t, s, me)
+		o, err := f.orders.Place(ctx, me.ProfileID, me.home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	move := func(o Order, a Action, by Actor) {
+		t.Helper()
+		if _, err := f.orders.Transition(ctx, o.ID, a, by); err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+	}
+	unpaid := place()
+	first, second := place(), place()
+	move(first, Pay, System)
+	move(second, Pay, System)
+	move(second, Accept, owner)
+	cancelled := place()
+	move(cancelled, Pay, System)
+	move(cancelled, Reject, owner)
+
+	list, err := f.orders.ListForKitchen(ctx, s.id, s.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != first.ID || list[1].ID != second.ID || list[1].Status != Accepted {
+		t.Fatalf("got %d orders; want the paid one, then the accepted one (not %s unpaid or the rejected one)", len(list), unpaid.ID)
+	}
+	if len(list[0].Items) != 2 {
+		t.Fatalf("kitchen orders need their dishes; got %d", len(list[0].Items))
+	}
+
+	stranger := f.profile(t, users.RoleRestaurant)
+	if _, err := f.orders.ListForKitchen(ctx, s.id, stranger.ProfileID); !errors.Is(err, ErrRestaurantNotFound) {
+		t.Fatalf("another owner: got %v, want ErrRestaurantNotFound", err)
+	}
+}

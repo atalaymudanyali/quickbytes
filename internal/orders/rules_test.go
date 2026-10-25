@@ -13,7 +13,7 @@ import (
 var allowed = map[Status]map[Action]Status{
 	Placed:   {Pay: Paid, FailPayment: Cancelled, Expire: Cancelled, Cancel: Cancelled},
 	Paid:     {Accept: Accepted, Reject: Cancelled, Cancel: Cancelled},
-	Accepted: {MarkReady: Ready},
+	Accepted: {MarkReady: Ready, Reject: Cancelled},
 	Ready:    {PickUp: PickedUp},
 	PickedUp: {Deliver: Delivered},
 }

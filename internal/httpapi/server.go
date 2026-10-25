@@ -139,6 +139,12 @@ func (s *Server) routes() []route {
 		{"GET /orders/{order_id}", customerOnly(s.handleGetOrder)},
 		{"POST /orders/{order_id}/cancel", customerOnly(s.handleCancelOrder)},
 
+		// The restaurant's side: its kitchen queue, and its buttons on an order.
+		{"GET /me/restaurants/{id}/orders", ownerOnly(s.handleKitchenOrders)},
+		{"POST /orders/{order_id}/accept", ownerOnly(s.handleAcceptOrder)},
+		{"POST /orders/{order_id}/reject", ownerOnly(s.handleRejectOrder)},
+		{"POST /orders/{order_id}/ready", ownerOnly(s.handleOrderReady)},
+
 		// Restaurants: browsing is public, managing is for owners.
 		{"GET /restaurants", public(s.handleNearbyRestaurants)},
 		{"GET /restaurants/{id}", public(s.handleGetRestaurant)},

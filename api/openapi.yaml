@@ -34,7 +34,7 @@ tags:
   - name: cart
     description: The customer's basket. One per customer, for one restaurant at a time, priced live from the menu.
   - name: orders
-    description: Checkout, and following an order through its statuses.
+    description: Checkout, following an order through its statuses, and the restaurant's side of it.
   - name: restaurants
     description: Finding and managing restaurants.
   - name: menus
@@ -600,6 +600,75 @@ paths:
         "404": { $ref: "#/components/responses/OrderNotFound" }
         "409": { $ref: "#/components/responses/InvalidTransition" }
 
+  /orders/{order_id}/accept:
+    parameters:
+      - $ref: "#/components/parameters/OrderID"
+    post:
+      tags: [orders]
+      operationId: acceptOrder
+      summary: Accept an order (restaurant)
+      description: "For the restaurant's owner. A `paid` order becomes `accepted`: the kitchen starts cooking. (From a later version, this is also when the payment is taken.)"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The order after the move, with its history.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+  /orders/{order_id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/OrderID"
+    post:
+      tags: [orders]
+      operationId: rejectOrder
+      summary: Reject an order (restaurant)
+      description: "For the restaurant's owner. A `paid` or `accepted` order becomes `cancelled` with reason `rejected`, e.g. when the kitchen runs out of something."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The order after the move, with its history.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+  /orders/{order_id}/ready:
+    parameters:
+      - $ref: "#/components/parameters/OrderID"
+    post:
+      tags: [orders]
+      operationId: markOrderReady
+      summary: Mark an order ready (restaurant)
+      description: "For the restaurant's owner. An `accepted` order becomes `ready` for pickup."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The order after the move, with its history.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
   /restaurants:
     get:
       tags: [restaurants]
@@ -784,6 +853,31 @@ paths:
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
             ETag: { $ref: "#/components/headers/MenuETag" }
+        "404": { $ref: "#/components/responses/RestaurantNotFound" }
+
+  /me/restaurants/{id}/orders:
+    parameters:
+      - $ref: "#/components/parameters/RestaurantID"
+    get:
+      tags: [orders]
+      operationId: listKitchenOrders
+      summary: A restaurant's orders to work on
+      description: |
+        For the restaurant's owner: its `paid`, `accepted` and `ready` orders,
+        oldest first (the order to cook them in), up to 50, with their dishes.
+        Unpaid (`placed`) orders aren't shown: nothing should be cooked before it's paid.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The orders.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/RestaurantNotFound" }
 
   /me/restaurants/{id}/menu:

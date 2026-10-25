@@ -72,6 +72,46 @@ func (s *Store) ListForCustomer(ctx context.Context, customerProfileID uuid.UUID
 	return s.collect(ctx, rows)
 }
 
+// KitchenStatuses are the orders a restaurant works on: paid (waiting for a yes
+// or no), accepted (cooking) and ready (waiting for pickup). Unpaid orders
+// aren't shown: the restaurant shouldn't start on food nobody has paid for.
+var KitchenStatuses = []Status{Paid, Accepted, Ready}
+
+// ErrRestaurantNotFound: no such restaurant, or not the asker's.
+var ErrRestaurantNotFound = errors.New("restaurant not found")
+
+// ListForKitchen returns a restaurant's orders in KitchenStatuses, oldest first:
+// the order they came in is the order to cook them. Only the restaurant's owner
+// may ask.
+func (s *Store) ListForKitchen(ctx context.Context, restaurantID, ownerProfileID uuid.UUID) ([]Order, error) {
+	var mine bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM restaurants WHERE id = $1 AND owner_profile_id = $2)`,
+		restaurantID, ownerProfileID).Scan(&mine)
+	if err != nil {
+		return nil, fmt.Errorf("check restaurant: %w", err)
+	}
+	if !mine {
+		return nil, ErrRestaurantNotFound
+	}
+	// Sent as plain text: the driver doesn't know the order_status type, so the
+	// database turns the text into it (::order_status[]).
+	kitchen := make([]string, len(KitchenStatuses))
+	for i, st := range KitchenStatuses {
+		kitchen[i] = string(st)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+orderColumns+`
+		FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
+		WHERE o.restaurant_id = $1 AND o.status = ANY($2::text[]::order_status[])
+		ORDER BY o.created_at, o.id
+		LIMIT $3`, restaurantID, kitchen, ListLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list kitchen orders: %w", err)
+	}
+	return s.collect(ctx, rows)
+}
+
 // collect reads a page of orders, then all their items in one more query (not
 // one query per order).
 func (s *Store) collect(ctx context.Context, rows pgx.Rows) ([]Order, error) {
