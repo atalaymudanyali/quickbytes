@@ -12,9 +12,10 @@ side menu.
 
 > **Status:** phase 1 of 7 (foundation) is done: accounts, restaurants, menus,
 > caching, rate limits, API docs and Istanbul demo data. Phase 2 (orders and payments)
-> has started: dishes have options (sizes, extras), and customers have saved
-> delivery addresses and a server-side cart priced live from the menu. Next:
-> checkout. See the [roadmap](#roadmap).
+> has started: dishes have options (sizes, extras), customers have saved delivery
+> addresses and a server-side cart priced live from the menu, and checkout turns the
+> cart into an order that moves through a state machine. Next: idempotent checkout,
+> then payments. See the [roadmap](#roadmap).
 
 ## Quick start
 
@@ -66,6 +67,25 @@ Phase 2 so far:
   that can no longer be ordered as they are stay in the cart, flagged, without a
   price. The database itself keeps every line in the cart's restaurant: both of a
   line's foreign keys share its `restaurant_id`.
+- **Checkout and orders:** `POST /orders` turns the cart into an order. It refuses
+  an empty cart, flagged lines, a paused restaurant and a basket below the minimum,
+  then in one transaction locks the cart, checks it still holds what was priced,
+  **copies** every name, option and price and the delivery address into the order,
+  and empties the cart. Later menu or address changes never alter a past order, and
+  a double-tapped "Place order" gives one order, not two.
+- **Order state machine:** `placed → paid → accepted → ready → picked_up →
+  delivered`, or `cancelled` with a reason (`payment_failed`, `rejected`,
+  `by_customer`, `expired`). One function holds every allowed move and who may make
+  it; it locks the order row (`SELECT … FOR UPDATE`), so two moves at once can't
+  both win, and writes a status history row for each. Every other move gets
+  `409 invalid_transition`. Customers cancel before the restaurant accepts;
+  restaurants see paid orders in a kitchen queue and accept, reject or mark them
+  ready; other people's orders are `404`.
+- **Expiry:** a background loop cancels orders still unpaid after 15 minutes. It
+  takes them with `FOR UPDATE SKIP LOCKED`, so several API copies share the work and
+  an order being paid at that moment is skipped, not waited for. Until the payment
+  issues land nothing marks an order paid, so every order not cancelled first
+  ends up expired.
 
 ## Measured
 
@@ -176,6 +196,22 @@ menu, and `POST /cart/items` with `{"menu_item_id": "...", "quantity": 2,
 Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
 another tab, change the price of a dish in the cart, and `GET /cart` again.
 
+To check out, find the customer's address IDs with `GET /me/addresses` and
+`POST /orders` with `{"address_id": "..."}`. The answer is the order with its
+history (`placed`, by the customer), and the cart is now empty. Then:
+
+- Change that dish's price as `hasan@`, and `GET /orders/{order_id}`: the order
+  keeps the price it was placed at.
+- `POST /orders/{order_id}/cancel` cancels it (`by_customer`); a second cancel gets
+  `409 invalid_transition`.
+- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue. It stays
+  empty for now: only paid orders show up, and paying arrives with the payment
+  issues.
+- Watch an unpaid order expire: restart the API with a short window,
+  `ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`, place an order and keep
+  reading it. After about a minute it's `cancelled` (`expired`, by `system`).
+  `make up` on its own goes back to 15 minutes.
+
 ### API documentation
 
 With the API running, open **http://localhost:8080/docs** for interactive docs
@@ -210,6 +246,10 @@ against it.
 | `PATCH /cart/items/{item_id}` | Change a line's `quantity` (1–20) or `choice_ids`. |
 | `DELETE /cart/items/{item_id}` | Take a line out; taking out the last one empties the cart. |
 | `DELETE /cart` | Empty the cart, e.g. to start one at another restaurant. `204`. |
+| `POST /orders` | Check out: `{"address_id"}`. Copies the cart into a `placed` order and empties the cart. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
+| `GET /orders` | The customer's newest 50 orders, with their dishes. |
+| `GET /orders/{order_id}` | One order with its status history (each move, who made it, when). Someone else's gets 404. |
+| `POST /orders/{order_id}/cancel` | Cancel while `placed` or `paid`; later gets `409 invalid_transition`. |
 | `GET /restaurants?lat=…&lng=…` | Restaurants whose delivery zone covers that point, closest first. Public, paginated with `next_cursor`. |
 | `GET /restaurants/{id}` | One restaurant. Public. |
 | `POST /restaurants` | Create a restaurant (needs a restaurant profile), optionally with `delivery_fee_kurus` and `min_basket_kurus` (both default to 0). |
@@ -217,6 +257,10 @@ against it.
 | `GET /me/restaurants` | The signed-in owner's restaurants. |
 | `GET /restaurants/{id}/menu` | A restaurant's menu: sections and dishes in the owner's order, each dish with its option groups and choices, sold-out dishes and switched-off choices marked `"available": false`, removed ones left out. Public. |
 | `GET /me/restaurants/{id}/menu` | The owner's full menu, archived categories and items included (marked). |
+| `GET /me/restaurants/{id}/orders` | The kitchen queue: the restaurant's paid, accepted and ready orders, oldest first. Owner only. |
+| `POST /orders/{order_id}/accept` | Restaurant: accept a paid order. |
+| `POST /orders/{order_id}/reject` | Restaurant: reject a paid or accepted order (`cancelled`, reason `rejected`). |
+| `POST /orders/{order_id}/ready` | Restaurant: mark an accepted order ready for pickup. |
 | `POST /restaurants/{id}/menu/categories` | Add a menu section, e.g. "Kebaplar". Owner only. |
 | `PATCH /restaurants/{id}/menu/categories/{category_id}` | Rename, archive (`"archived": true`) or restore it. |
 | `POST /restaurants/{id}/menu/items` | Add a dish: category, name, description, price in kuruş (`32000` = 320 TL). |
