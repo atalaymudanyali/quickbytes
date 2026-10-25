@@ -5,6 +5,8 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
 // errorBody is the one shape every error response has, so clients can handle all
@@ -21,8 +23,12 @@ type errorDetail struct {
 	// Message is meant for people and may change wording.
 	Message string `json:"message"`
 	// Fields explains which input fields were wrong, for validation errors.
-	Fields    map[string]string `json:"fields,omitempty"`
-	RequestID string            `json:"request_id,omitempty"`
+	Fields map[string]string `json:"fields,omitempty"`
+	// GroupID and ChoiceID point at the option group or choice an
+	// option-picking error is about (uuid.Nil: left out).
+	GroupID   uuid.UUID `json:"group_id,omitzero"`
+	ChoiceID  uuid.UUID `json:"choice_id,omitzero"`
+	RequestID string    `json:"request_id,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

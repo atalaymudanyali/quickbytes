@@ -31,6 +31,8 @@ tags:
     description: The roles a user can play (customer, restaurant owner, driver).
   - name: addresses
     description: A customer's saved delivery addresses.
+  - name: cart
+    description: The customer's basket. One per customer, for one restaurant at a time, priced live from the menu.
   - name: restaurants
     description: Finding and managing restaurants.
   - name: menus
@@ -370,6 +372,132 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/AddressNotFound" }
+
+  /cart:
+    get:
+      tags: [cart]
+      operationId: getCart
+      summary: The signed-in customer's cart, priced now
+      description: |
+        Prices are never stored in the cart: every response works them out from the
+        menu as it is right now, so a price change shows up at once. Dishes that
+        can't be ordered as they are stay in the cart with a `problem` and no price.
+        A customer without a cart gets an empty one (`restaurant: null`).
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The cart.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cart" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+    delete:
+      tags: [cart]
+      operationId: clearCart
+      summary: Empty the cart
+      description: Afterwards dishes from any restaurant can be added. Clearing an empty cart is fine too.
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+
+  /cart/items:
+    post:
+      tags: [cart]
+      operationId: addToCart
+      summary: Add a dish to the cart
+      description: |
+        The first dish makes the cart and ties it to that dish's restaurant. The same
+        dish with the same choices adds to the quantity of the line already there.
+        The choices are checked against the dish's option rules.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartItemAdd" }
+      responses:
+        "200":
+          description: The whole cart after adding.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cart" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404":
+          description: No such dish on any menu (code `item_not_found`), including archived ones.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409": { $ref: "#/components/responses/CartConflict" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/CartRejected" }
+
+  /cart/items/{item_id}:
+    parameters:
+      - $ref: "#/components/parameters/CartItemID"
+    patch:
+      tags: [cart]
+      operationId: changeCartItem
+      summary: Change a line's quantity or choices
+      description: |
+        Send `quantity`, `choice_ids`, or both. New choices are checked like on add.
+        If the change makes this line a copy of another line (same dish, same
+        choices), the two become one line. To take a line out, use DELETE.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartItemPatch" }
+      responses:
+        "200":
+          description: The whole cart after the change.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cart" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/CartItemNotFound" }
+        "409": { $ref: "#/components/responses/CartConflict" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/CartRejected" }
+    delete:
+      tags: [cart]
+      operationId: removeCartItem
+      summary: Take a line out of the cart
+      description: Taking out the last line empties the cart, so dishes from any restaurant can be added next.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The whole cart after removing.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cart" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404": { $ref: "#/components/responses/CartItemNotFound" }
 
   /restaurants:
     get:
@@ -1027,6 +1155,12 @@ components:
       schema: { type: string, example: '"menu2-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
 
   parameters:
+    CartItemID:
+      name: item_id
+      in: path
+      required: true
+      description: The cart line's `id` (not the dish's `menu_item_id`). Anything that isn't a UUID gets a 404.
+      schema: { type: string }
     AddressID:
       name: address_id
       in: path
@@ -1146,6 +1280,48 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    CartItemNotFound:
+      description: No such line in your cart (code `cart_item_not_found`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    CartConflict:
+      description: |
+        The request is fine but the cart or menu says no:
+        - `cart_restaurant_mismatch`: the cart has dishes from another restaurant. Clear it (DELETE /cart) to start a new one.
+        - `item_unavailable`: the restaurant switched this dish off for now.
+        - `restaurant_not_accepting_orders`: the restaurant is paused.
+        - `cart_full`: a cart holds up to 30 different lines.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: cart_restaurant_mismatch
+              message: your cart has dishes from Hasan Usta Kebap Kadıköy; clear it to start a new one
+              request_id: 0c045729a68d831e5cc32825
+    CartRejected:
+      description: |
+        Either invalid fields (code `validation_failed`, e.g. a quantity that would
+        go over 20), or choices that don't fit the dish's option rules. Those use the
+        option codes (`unknown_choice`, `duplicate_choice`, `choice_unavailable`,
+        `too_few_picks`, `too_many_picks`) and say which `group_id` and/or
+        `choice_id` it's about.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: too_few_picks
+              message: "Boy: pick exactly 1"
+              group_id: 01a14bab-224e-7468-8920-42d59bbb55ee
+              request_id: 0c045729a68d831e5cc32825
     Deleted:
       description: Deleted. No body.
       headers:
@@ -1179,6 +1355,14 @@ components:
               type: object
               description: Only for `validation_failed`. Each invalid field and what's wrong with it.
               additionalProperties: { type: string }
+            group_id:
+              type: string
+              format: uuid
+              description: Only for option-picking errors. The option group it's about.
+            choice_id:
+              type: string
+              format: uuid
+              description: Only for option-picking errors. The choice it's about.
             request_id:
               type: string
               description: The same value as the `X-Request-ID` header.
@@ -1292,6 +1476,124 @@ components:
       maximum: 29.95
       description: Longitude (east–west), inside Istanbul.
       example: 29.0233
+
+    Cart:
+      type: object
+      required: [restaurant, items, subtotal_kurus, delivery_fee_kurus, total_kurus, min_basket_kurus, below_minimum, kurus_to_minimum]
+      properties:
+        restaurant:
+          description: The restaurant this cart is for; null when the cart is empty.
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CartRestaurant" }]
+        items:
+          type: array
+          description: Lines in the order they were first added.
+          items: { $ref: "#/components/schemas/CartLine" }
+        subtotal_kurus:
+          type: integer
+          description: Dishes and extras. Lines with a problem don't count.
+          example: 106000
+        delivery_fee_kurus:
+          type: integer
+          description: The restaurant's fee; 0 when nothing in the cart can be ordered.
+          example: 2990
+        total_kurus:
+          type: integer
+          description: Subtotal plus delivery fee.
+          example: 108990
+        min_basket_kurus: { type: integer, example: 30000 }
+        below_minimum:
+          type: boolean
+          description: A warning while shopping. Checkout won't accept a cart below the minimum.
+        kurus_to_minimum:
+          type: integer
+          description: How much more the subtotal needs to reach the minimum; 0 when it's reached.
+          example: 0
+
+    CartRestaurant:
+      type: object
+      required: [id, name, accepting_orders]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Hasan Usta Kebap Kadıköy }
+        accepting_orders: { type: boolean }
+
+    CartLine:
+      type: object
+      required: [id, menu_item_id, name, quantity, options, unit_price_kurus, line_total_kurus, problem]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The line's ID, for PATCH and DELETE /cart/items/{item_id}.
+        menu_item_id: { type: string, format: uuid }
+        name: { type: string, example: Adana Kebap }
+        quantity: { type: integer, minimum: 1, maximum: 20, example: 2 }
+        options:
+          type: array
+          description: The picked choices, in menu order. Empty on a line with a problem.
+          items: { $ref: "#/components/schemas/CartOption" }
+        unit_price_kurus:
+          type: integer
+          nullable: true
+          description: The dish plus its extras, from today's menu. Null on a line with a problem.
+          example: 53000
+        line_total_kurus:
+          type: integer
+          nullable: true
+          description: unit_price_kurus × quantity. Null on a line with a problem.
+          example: 106000
+        problem:
+          description: Null when the line can be ordered as it is.
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CartLineProblem" }]
+
+    CartOption:
+      type: object
+      required: [group_id, group_name, choice_id, choice_name, extra_price_kurus]
+      properties:
+        group_id: { type: string, format: uuid }
+        group_name: { type: string, example: Boy }
+        choice_id: { type: string, format: uuid }
+        choice_name: { type: string, example: Büyük }
+        extra_price_kurus: { type: integer, example: 8000 }
+
+    CartLineProblem:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [item_unavailable, item_removed, options_changed]
+          description: |
+            `item_unavailable`: switched off for now, may come back.
+            `item_removed`: no longer on the menu.
+            `options_changed`: the picked choices no longer fit the dish (a choice was deleted or switched off, or the rules changed). Change the choices or remove the line.
+        message: { type: string, example: Künefe is not available right now }
+
+    CartItemAdd:
+      type: object
+      additionalProperties: false
+      required: [menu_item_id]
+      properties:
+        menu_item_id: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1, maximum: 20, default: 1 }
+        choice_ids:
+          type: array
+          description: The picked option choices, in any order.
+          items: { type: string, format: uuid }
+          default: []
+
+    CartItemPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 20 }
+        choice_ids:
+          type: array
+          description: Replaces all the line's choices.
+          items: { type: string, format: uuid }
 
     Address:
       type: object
