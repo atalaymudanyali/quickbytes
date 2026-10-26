@@ -25,6 +25,16 @@ type Config struct {
 	// IdempotencyCleanupEvery is how often idempotency keys older than 24
 	// hours are deleted.
 	IdempotencyCleanupEvery time.Duration
+	// PayProviderURL and PayProviderKey are where the payment provider is and
+	// the API's merchant key there. PayProviderTimeout is how long one call
+	// may take before it counts as unanswered.
+	PayProviderURL     string
+	PayProviderKey     string
+	PayProviderTimeout time.Duration
+	// PaymentReconcileEvery is how often the reconcile loop looks for
+	// payments that need work (an unknown result, a slow card, a capture
+	// that didn't go through).
+	PaymentReconcileEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -36,6 +46,8 @@ func Load() (Config, error) {
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		ShutdownTimeout: 10 * time.Second,
+		PayProviderURL:  getenv("PAYPROVIDER_URL", "http://localhost:8090"),
+		PayProviderKey:  os.Getenv("PAYPROVIDER_KEY"),
 	}
 	var err error
 	// Both can be shortened to watch an order expire in a demo, e.g.
@@ -49,11 +61,20 @@ func Load() (Config, error) {
 	if cfg.IdempotencyCleanupEvery, err = getDuration("IDEMPOTENCY_CLEANUP_EVERY", 10*time.Minute); err != nil {
 		return Config{}, err
 	}
+	if cfg.PayProviderTimeout, err = getDuration("PAYPROVIDER_TIMEOUT", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.PaymentReconcileEvery, err = getDuration("PAYMENT_RECONCILE_EVERY", 5*time.Second); err != nil {
+		return Config{}, err
+	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
 	if len(cfg.JWTSecret) < 32 {
 		return Config{}, fmt.Errorf("JWT_SECRET is required and must be at least 32 characters (generate one with: openssl rand -base64 48)")
+	}
+	if cfg.PayProviderKey == "" {
+		return Config{}, fmt.Errorf("PAYPROVIDER_KEY is required: the API's merchant key at the payment provider (in development, the PAYPROVIDER_MERCHANT_KEY in docker-compose.yml)")
 	}
 	return cfg, nil
 }

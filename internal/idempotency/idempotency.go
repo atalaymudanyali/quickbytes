@@ -200,6 +200,29 @@ func SaveTx(ctx context.Context, tx pgx.Tx, c Claim, r Response) error {
 	return save(ctx, tx, c, r)
 }
 
+// ReplaceTx swaps the answer the attempt holding c already stored for a newer
+// one, inside tx. For work done in steps, where the first step must already
+// leave an answer behind (checkout: the order is placed, its payment still
+// pending) and a later step knows the final one (the payment's result). A
+// retry between the two gets the first answer, which was true when stored.
+//
+// Like Save, only the attempt that stored the first answer may replace it
+// (ErrClaimLost otherwise).
+func ReplaceTx(ctx context.Context, tx pgx.Tx, c Claim, r Response) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE idempotency_keys
+		SET response_status = $4, response_body = $5
+		WHERE user_id = $1 AND key = $2 AND attempt = $3 AND status = 'done'`,
+		c.UserID, c.Key, c.attempt, r.Status, r.Body)
+	if err != nil {
+		return fmt.Errorf("replace idempotent response: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrClaimLost
+	}
+	return nil
+}
+
 // execer is what the pool and a transaction have in common, for writes that
 // run in either.
 type execer interface {

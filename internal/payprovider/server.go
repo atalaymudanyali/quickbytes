@@ -67,6 +67,7 @@ func (s *Server) routes() []route {
 		// Payments. Every write needs an Idempotency-Key, so a retried call
 		// never holds, takes or gives back money twice.
 		{"POST /v1/payments", merchantOnly(s.idempotent(s.handleAuthorize))},
+		{"GET /v1/payments", merchantOnly(s.handleFindPayments)},
 		{"GET /v1/payments/{payment_id}", merchantOnly(s.handleGetPayment)},
 		{"POST /v1/payments/{payment_id}/capture", merchantOnly(s.idempotent(s.handleMove(ActionCapture)))},
 		{"POST /v1/payments/{payment_id}/void", merchantOnly(s.idempotent(s.handleMove(ActionVoid)))},

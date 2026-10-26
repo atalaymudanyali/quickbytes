@@ -151,6 +151,18 @@ func saveAnswerIn(ctx context.Context, tx pgx.Tx, status int, body []byte) error
 	return nil
 }
 
+// replaceAnswerIn swaps the answer saveAnswerIn stored for this request for a
+// newer one, inside tx: for a handler working in steps (checkout), whose
+// first step stores an answer and a later one knows the final answer.
+// Outside idempotent it does nothing.
+func replaceAnswerIn(ctx context.Context, tx pgx.Tx, status int, body []byte) error {
+	held, ok := ctx.Value(heldKeyKey).(*heldKey)
+	if !ok {
+		return nil
+	}
+	return idempotency.ReplaceTx(ctx, tx, held.claim, idempotency.Response{Status: status, Body: body})
+}
+
 func (s *Server) releaseKey(ctx context.Context, r *http.Request, c idempotency.Claim) {
 	if err := s.idempotency.Release(ctx, c); err != nil {
 		s.logger.Error("release idempotency key", "request_id", requestIDFrom(r.Context()), "err", err)

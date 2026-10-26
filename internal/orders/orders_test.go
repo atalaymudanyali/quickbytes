@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
@@ -335,5 +336,57 @@ func TestSimultaneousMovesOnlyOneWins(t *testing.T) {
 	s, reason := f.status(t, id)
 	if h := f.history(t, id); s != Cancelled || reason == nil || *reason != Expired || len(h) != 1 {
 		t.Fatalf("status %s (%v), %d history rows; want cancelled (expired), 1 row", s, reason, len(h))
+	}
+}
+
+// A move hook runs inside the move's transaction: it sees the move, and if it
+// fails, the move is undone. Expiry runs it too.
+func TestMoveHooks(t *testing.T) {
+	f := setup(t)
+	p := f.cast(t)
+	ctx := context.Background()
+
+	var seen []Change
+	var id, old uuid.UUID
+	fail := false
+	f.orders.OnMove(func(ctx context.Context, tx pgx.Tx, c Change) error {
+		var st Status
+		if err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id = $1`, c.OrderID).Scan(&st); err != nil {
+			return err
+		}
+		if st != c.To {
+			t.Errorf("hook sees %s, want the move to %s already made", st, c.To)
+		}
+		if c.OrderID == id || c.OrderID == old { // the shared test database has other tests' orders
+			seen = append(seen, c)
+		}
+		if fail {
+			return errors.New("hook failed")
+		}
+		return nil
+	})
+
+	id = f.newOrder(t, p, Paid)
+	if _, err := f.orders.Transition(ctx, id, Accept, p.owner); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if _, err := f.orders.Transition(ctx, id, MarkReady, p.owner); err == nil {
+		t.Fatal("want the hook's error")
+	}
+	if st, _ := f.status(t, id); st != Accepted {
+		t.Fatalf("status %s after a failed hook, want still accepted", st)
+	}
+	fail = false
+
+	old = f.newOrder(t, p, Placed)
+	if _, err := f.pool.Exec(ctx, `UPDATE orders SET created_at = now() - interval '1 hour' WHERE id = $1`, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.orders.ExpireUnpaid(ctx, 30*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 3 || seen[0].To != Accepted || seen[2].OrderID != old || seen[2].To != Cancelled {
+		t.Fatalf("hooks saw %+v; want accept, the failed mark-ready, then the expiry", seen)
 	}
 }

@@ -11,19 +11,23 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments/paymentstest"
+	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
 // orderFixture is the cart fixture plus the server itself, for moves no endpoint
-// offers yet (the payment arriving).
+// offers, and the fake payment provider behind it.
 type orderFixture struct {
 	cartFixture
-	srv *Server
+	srv      *Server
+	provider *paymentstest.Fake
 }
 
 func newOrderFixture(t *testing.T) orderFixture {
 	t.Helper()
-	srv, h := newAuthTestServer(t)
-	return orderFixture{cartFixture: newCartFixtureWith(t, h), srv: srv}
+	fake := paymentstest.NewFake()
+	srv, h := newTestServerWith(t, testutil.RedisIfConfigured(t), fake)
+	return orderFixture{cartFixture: newCartFixtureWith(t, h), srv: srv, provider: fake}
 }
 
 // customer signs up a customer with one saved address.
@@ -46,10 +50,22 @@ func (f orderFixture) checkout(t *testing.T, token, addressID string) *httptest.
 	return f.checkoutWithKey(t, token, uuid.NewString(), addressID)
 }
 
-// checkoutWithKey sends a checkout with a chosen key, as a retry would.
+// checkoutWithKey sends a checkout with a chosen key, as a retry would. It pays
+// with the slow card, so the order stays placed (payment processing) and tests
+// can move it themselves; payment tests choose their card with payWith.
 func (f orderFixture) checkoutWithKey(t *testing.T, token, key, addressID string) *httptest.ResponseRecorder {
 	t.Helper()
-	return sendWithKey(t, f.h, "/orders", token, key, `{"address_id": "`+addressID+`"}`)
+	return sendWithKey(t, f.h, "/orders", token, key, checkoutBody(addressID, paymentstest.CardSlow))
+}
+
+// payWith checks out with a chosen card and a new key.
+func (f orderFixture) payWith(t *testing.T, token, addressID, card string) *httptest.ResponseRecorder {
+	t.Helper()
+	return sendWithKey(t, f.h, "/orders", token, uuid.NewString(), checkoutBody(addressID, card))
+}
+
+func checkoutBody(addressID, card string) string {
+	return `{"address_id": "` + addressID + `", "card_number": "` + card + `"}`
 }
 
 // sendWithKey POSTs a JSON body with an Idempotency-Key header ("": none).
@@ -104,11 +120,7 @@ func TestCancelAfterPayingButNotAfterExpiry(t *testing.T) {
 	me, home := f.customer(t)
 	ctx := context.Background()
 
-	f.fill(t, me)
-	paid := decode[orderDetail](t, f.checkout(t, me, home), http.StatusCreated)
-	if _, err := f.srv.orders.Transition(ctx, paid.ID, orders.Pay, orders.System); err != nil {
-		t.Fatal(err)
-	}
+	paid := f.placePaid(t, me, home)
 	c := decode[orderDetail](t, send(t, f.h, http.MethodPost, "/orders/"+paid.ID.String()+"/cancel", me, ""), http.StatusOK)
 	if c.Status != orders.Cancelled || len(c.History) != 3 || c.History[1].By != "system" {
 		t.Fatalf("cancel a paid order: %+v", c.History)
@@ -214,14 +226,14 @@ func TestOrdersArePrivate(t *testing.T) {
 	}
 }
 
-// placePaid checks a full cart out and plays the payment arriving, so the order
-// is where the restaurant's buttons start.
+// placePaid checks a full cart out with the approved card, so the order is
+// paid (its payment authorized): where the restaurant's buttons start.
 func (f orderFixture) placePaid(t *testing.T, token, addressID string) orderDetail {
 	t.Helper()
 	f.fill(t, token)
-	o := decode[orderDetail](t, f.checkout(t, token, addressID), http.StatusCreated)
-	if _, err := f.srv.orders.Transition(context.Background(), o.ID, orders.Pay, orders.System); err != nil {
-		t.Fatal(err)
+	o := decode[orderDetail](t, f.payWith(t, token, addressID, paymentstest.CardApprove), http.StatusCreated)
+	if o.Status != orders.Paid {
+		t.Fatalf("checkout with the approved card: %s, want paid", o.Status)
 	}
 	return o
 }

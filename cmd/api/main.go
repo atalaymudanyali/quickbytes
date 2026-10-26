@@ -23,6 +23,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -83,6 +84,12 @@ func run(logger *slog.Logger) error {
 	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
 	orderStore := orders.NewStore(pool, cartStore, addressStore)
 	idempotencyStore := idempotency.NewStore(pool)
+	// The one plug in the payments socket today: our mock provider over HTTP.
+	provider := payments.NewPayProvider(cfg.PayProviderURL, cfg.PayProviderKey, cfg.PayProviderTimeout)
+	paymentStore := payments.NewStore(pool, provider, logger)
+	// Every order move notes, in the same commit, that the order's payment may
+	// need work (capture, void, refund).
+	orderStore.OnMove(paymentStore.MarkDueIn)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
@@ -102,6 +109,7 @@ func run(logger *slog.Logger) error {
 			Addresses:   addressStore,
 			Carts:       cartStore,
 			Orders:      orderStore,
+			Payments:    paymentStore,
 			Idempotency: idempotencyStore,
 			MenuCache:   menuCache,
 			Limiter:     ratelimit.New(redisClient, logger),
@@ -113,6 +121,9 @@ func run(logger *slog.Logger) error {
 	// Unpaid orders are cancelled after the pay window. The loop stops with ctx,
 	// on shutdown.
 	go orderStore.RunExpiry(ctx, cfg.OrderExpiryEvery, cfg.OrderPayWindow, logger)
+	// Payments that need work (an unknown result, a slow card, a money step
+	// that didn't go through) are settled with the provider. Stops with ctx.
+	go paymentStore.RunReconcile(ctx, cfg.PaymentReconcileEvery, logger)
 	// Idempotency keys older than 24 hours are deleted. This loop stops with ctx too.
 	go idempotencyStore.RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 

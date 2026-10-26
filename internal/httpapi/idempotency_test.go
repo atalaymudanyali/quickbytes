@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
+	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments"
+	"github.com/atalaymudanyali/quickbytes/internal/payments/paymentstest"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
@@ -118,7 +122,7 @@ func TestCheckoutWhileTheFirstAttemptRuns(t *testing.T) {
 
 	// Play the first attempt: hold the key, as a request still running would.
 	userID := f.userID(t, me)
-	fp := idempotency.FingerprintOf(http.MethodPost, "/orders", []byte(`{"address_id": "`+home+`"}`))
+	fp := idempotency.FingerprintOf(http.MethodPost, "/orders", []byte(checkoutBody(home, paymentstest.CardSlow)))
 	if _, _, err := f.srv.idempotency.Begin(context.Background(), userID, key, fp); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +285,9 @@ func takeOver(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, key string) {
 // The issue's acceptance test: the same checkout sent 10 times at once, as a
 // phone retrying on a bad connection might. Each attempt behaves like the app
 // should: on 409 idempotency_in_progress it waits a moment and retries. In the
-// end there is exactly one order, and every attempt got the same answer.
+// end there is exactly one order and one authorize, and every attempt got
+// either the answer stored before the card was asked (payment pending) or the
+// final one; once checkout is done, every retry gets the final one.
 func TestTenSimultaneousRetriesMakeOneOrder(t *testing.T) {
 	f := newOrderFixture(t)
 	me, home := f.customer(t)
@@ -326,10 +332,19 @@ func TestTenSimultaneousRetriesMakeOneOrder(t *testing.T) {
 	close(start)
 	wg.Wait()
 
+	// The final answer: what a retry gets now that checkout is done.
+	final := f.checkoutWithKey(t, me, key, home).Body.Bytes()
 	for i, b := range bodies {
-		if !bytes.Equal(b, bodies[0]) {
-			t.Fatalf("answer %d differs:\n%s\nfirst:\n%s", i, b, bodies[0])
+		if bytes.Equal(b, final) {
+			continue
 		}
+		mid := decode[orderDetail](t, recorderWith(b), http.StatusCreated)
+		if mid.Status != orders.Placed || mid.Payment == nil || mid.Payment.Status != payments.Pending {
+			t.Fatalf("answer %d is neither the final answer nor the one from before the card was asked:\n%s", i, b)
+		}
+	}
+	if n := f.provider.Calls("authorize"); n != 1 {
+		t.Fatalf("%d authorize calls, want 1", n)
 	}
 	if len(bodies) != attempts || replays != attempts-1 {
 		t.Fatalf("%d answers, %d replays; want %d and %d", len(bodies), replays, attempts, attempts-1)
@@ -339,14 +354,22 @@ func TestTenSimultaneousRetriesMakeOneOrder(t *testing.T) {
 	}
 	t.Logf("10 attempts: 1 did the work, 9 replayed it, %d waits on 409 along the way", waited)
 
-	// And 10 more, one after another, long after: still the same answer.
+	// And 10 more, one after another, long after: still the final answer.
 	for i := range attempts {
 		rec := f.checkoutWithKey(t, me, key, home)
-		if rec.Code != http.StatusCreated || !bytes.Equal(rec.Body.Bytes(), bodies[0]) {
+		if rec.Code != http.StatusCreated || !bytes.Equal(rec.Body.Bytes(), final) {
 			t.Fatalf("sequential attempt %d: %d %s", i+1, rec.Code, rec.Body)
 		}
 	}
 	if n := f.orderCount(t, me); n != 1 {
 		t.Fatalf("%d orders after 20 attempts, want 1", n)
 	}
+}
+
+// recorderWith wraps a stored body so decode can read it.
+func recorderWith(body []byte) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	rec.Code = http.StatusCreated
+	rec.Body.Write(body)
+	return rec
 }

@@ -83,8 +83,9 @@ Phase 2 so far:
   `409 idempotency_in_progress`; the same key with a different body is
   `422 idempotency_key_reused`. Keys live in PostgreSQL per user, with a SHA-256
   fingerprint of the request, for 24 hours. The answer is stored **in the order's
-  own transaction**, so an order never exists without its answer. Ten simultaneous
-  retries make exactly one order and ten identical answers.
+  own transaction**, so an order never exists without its answer (a first answer
+  before the card is asked, replaced by the final one after). Ten simultaneous
+  retries make exactly one order and one card authorization.
 - **Order state machine:** `placed → paid → accepted → ready → picked_up →
   delivered`, or `cancelled` with a reason (`payment_failed`, `rejected`,
   `by_customer`, `expired`). One function holds every allowed move and who may make
@@ -95,9 +96,7 @@ Phase 2 so far:
   ready; other people's orders are `404`.
 - **Expiry:** a background loop cancels orders still unpaid after 15 minutes. It
   takes them with `FOR UPDATE SKIP LOCKED`, so several API copies share the work and
-  an order being paid at that moment is skipped, not waited for. Until the payment
-  issues land nothing marks an order paid, so every order not cancelled first
-  ends up expired.
+  an order being paid at that moment is skipped, not waited for.
 - **Mock payment provider:** a fake card processor, run as **its own service with
   its own database** (`payprovider`, in the same PostgreSQL container, sharing no
   tables), so the API will reach it only over HTTP, like Stripe or iyzico, where
@@ -113,7 +112,27 @@ Phase 2 so far:
   insufficient funds, a slow card (`processing`, finished later by a background
   loop) and a card that hangs for 30 seconds. Its own OpenAPI file,
   [`api/payprovider.yaml`](api/payprovider.yaml), is checked against every answer
-  in its tests. The API doesn't call it yet.
+  in its tests.
+- **Payments in the API:** checkout **authorizes** the card (holds the money), the
+  restaurant accepting **captures** it, a reject or cancel before that **voids**
+  the hold, and a cancel after it is **refunded**. A decline cancels the order
+  (`payment_failed`). The API reaches the provider only through a small Go
+  interface (`payments.Provider`), with one HTTP client plugged into it, and the
+  card number is never stored (only its last 4 digits). Every call carries an
+  `Idempotency-Key` made from the payment and the step (`<payment>:capture`), so a
+  retry reuses the same key and the provider moves the money once. A provider that
+  doesn't answer within 5 seconds means **`unknown`, not failed**. A background
+  reconcile loop then finds the payment at the provider by the order ID, and never
+  authorizes again. If nothing turns up after a minute, the payment fails
+  (`no_answer`). The same loop polls slow (`processing`) cards, and retries
+  captures, voids and refunds that got no answer, waiting longer each time
+  (exponential backoff with jitter). It decides what to do the thermostat way:
+  look at the order and the payment, and take the one step that brings them in
+  line. Every payment change is appended to `payment_events` (append-only, by
+  trigger) with where it came from (`request` or `reconcile`). Several API copies
+  can run the loop at once: each takes due payments with `FOR UPDATE SKIP LOCKED`
+  and a one-minute lease. The customer sees the payment and its history on the
+  order; the restaurant doesn't.
 
 ## Measured
 
@@ -162,6 +181,31 @@ these numbers compare the three setups; they don't predict a real server's capac
 
 The rate-limit checks run before the database lookup and the password hash, so a
 blocked attacker costs the server about 20 times less than a guess.
+
+### Payments: timeouts and retries
+
+`make test` runs these against the real provider over HTTP, with the API's client
+timeout cut to 300 ms so the hang card really times out
+([`internal/payments/reconcile_test.go`](internal/payments/reconcile_test.go)).
+The live numbers are from `make up` with the default 5-second timeout and
+5-second reconcile loop:
+
+| What | Result |
+|---|---|
+| Hang card at checkout (live) | Answer after **5.03 s**: order `placed`, payment `unknown` |
+| …then the reconcile loop (live) | `paid` about **9 s later**, found by the order ID; the provider holds **one** payment |
+| Slow card (live) | `processing`, then `paid` about **12 s** after checkout |
+| 10 simultaneous retries of one checkout | **1** order, **1** card authorization |
+| The same authorize sent 4 times (hang card, real provider) | **1** provider payment |
+
+Each safety net was also broken on purpose, to check a test catches it:
+
+| Broken on purpose | What the tests said |
+|---|---|
+| A fresh random key on every authorize try | `the provider has 4 payments for the order, want 1` (a double charge) |
+| No one-minute grace before "never arrived" | `young payment: failed, want still pending` |
+| Provider calls stopped when the customer's request ends | `context canceled`: an answer about real money went unrecorded |
+| The order move not marking the payment due | `payment due: false`: an accept whose capture failed would never be retried |
 
 ## Try it
 
@@ -225,9 +269,23 @@ Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
 another tab, change the price of a dish in the cart, and `GET /cart` again.
 
 To check out, find the customer's address IDs with `GET /me/addresses` and
-`POST /orders` with `{"address_id": "..."}` and an `Idempotency-Key` header (any
-new UUID, e.g. from `uuidgen`). The answer is the order with its history
-(`placed`, by the customer), and the cart is now empty. Then:
+`POST /orders` with `{"address_id": "...", "card_number": "4242424242424242"}` and
+an `Idempotency-Key` header (any new UUID, e.g. from `uuidgen`). The card is one of
+the payment provider's test cards (below). The answer is the order with its
+history and its payment, and the cart is now empty. What the card does:
+
+| Card | Order | Payment (ledger) |
+|---|---|---|
+| `4242424242424242` | `paid` | `pending` → `authorized` |
+| `4000000000000002` | `cancelled` (`payment_failed`) | `pending` → `failed` (`card_declined`) |
+| `4000000000007777` | `placed`, then `paid` about 10 seconds later | `pending` → `processing` → `authorized` (via `reconcile`) |
+| `4000000000003333` | `placed` after a 5-second wait, then `paid` seconds later | `pending` → `unknown` (no answer in time) → `authorized` (via `reconcile`) |
+
+Keep reading the order (`GET /orders/{order_id}`) to watch the last two settle: the
+API's reconcile loop asks the provider every few seconds, finding the hang card's
+payment by the order ID instead of charging again.
+
+Then:
 
 - Send the exact same request again, same key: you get the same order back with
   `Idempotent-Replayed: true`, and `GET /orders` still shows one order. The same
@@ -237,9 +295,8 @@ new UUID, e.g. from `uuidgen`). The answer is the order with its history
   keeps the price it was placed at.
 - `POST /orders/{order_id}/cancel` cancels it (`by_customer`); a second cancel gets
   `409 invalid_transition`.
-- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue. It stays
-  empty for now: only paid orders show up, and paying arrives with the payment
-  issues.
+- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue: the paid
+  orders (approved card) show up there.
 - Watch an unpaid order expire: restart the API with a short window,
   `ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`, place an order and keep
   reading it. After about a minute it's `cancelled` (`expired`, by `system`).
@@ -273,15 +330,15 @@ curl localhost:8090/v1/payments/<id>/capture -X POST -H "$KEY" -H 'Idempotency-K
 curl localhost:8090/v1/payments/<id>/void -X POST -H "$KEY" -H 'Idempotency-Key: demo-3'
 
 # The hang card, with a caller that gives up after 5 seconds (like the API will).
-# The call times out, yet GET shows the money is held: a timeout means "unknown",
-# not "failed".
+# The call times out, so we never got the payment's ID. Looking it up by our own
+# reference shows the money is held: a timeout means "unknown", not "failed".
 curl --max-time 5 localhost:8090/v1/payments -H "$KEY" -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: demo-4' -d '{"amount_kurus": 5000, "card_number": "4000000000003333", "reference": "hang-demo"}'
-docker compose exec postgres psql -U quickbytes -d payprovider \
-  -c "SELECT id, status FROM payments WHERE reference = 'hang-demo'"
+curl 'localhost:8090/v1/payments?reference=hang-demo' -H "$KEY"
 ```
 
-All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments/{id}`,
+All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments?reference=`
+(find by your own reference), `GET /v1/payments/{id}`,
 `POST /v1/payments/{id}/capture`, `/void`, `/refund`, and `GET /v1/account` (whose
 key is this?). The contract is [`api/payprovider.yaml`](api/payprovider.yaml).
 
@@ -319,7 +376,7 @@ against it.
 | `PATCH /cart/items/{item_id}` | Change a line's `quantity` (1–20) or `choice_ids`. |
 | `DELETE /cart/items/{item_id}` | Take a line out; taking out the last one empties the cart. |
 | `DELETE /cart` | Empty the cart, e.g. to start one at another restaurant. `204`. |
-| `POST /orders` | Check out: `{"address_id"}`, with an `Idempotency-Key` header (retries with the same key replay the first answer). Copies the cart into a `placed` order and empties the cart. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
+| `POST /orders` | Check out: `{"address_id", "card_number"}` (a test card), with an `Idempotency-Key` header (retries with the same key replay the first answer). Copies the cart into an order, empties the cart, and authorizes the card: `paid`, `cancelled` (`payment_failed`), or `placed` while the payment is `processing` or `unknown`. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
 | `GET /orders` | The customer's newest 50 orders, with their dishes. |
 | `GET /orders/{order_id}` | One order with its status history (each move, who made it, when). Someone else's gets 404. |
 | `POST /orders/{order_id}/cancel` | Cancel while `placed` or `paid`; later gets `409 invalid_transition`. |
@@ -378,6 +435,7 @@ considered, and what it costs.
 - [0005](docs/adr/0005-money-in-kurus.md) Money as whole kuruş
 - [0006](docs/adr/0006-uuidv7-ids.md) UUIDv7 for every ID
 - [0007](docs/adr/0007-rate-limiting.md) Login rate limits: slow down, never lock
+- [0008](docs/adr/0008-payments-find-out-never-charge-again.md) Payments: a timeout is "unknown", found out later, never charged again
 
 ## Roadmap
 

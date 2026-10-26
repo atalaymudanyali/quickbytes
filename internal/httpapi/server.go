@@ -14,6 +14,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -38,6 +39,8 @@ type Deps struct {
 	Addresses   *addresses.Store
 	Carts       *carts.Store
 	Orders      *orders.Store
+	// Payments takes each order's payment through the payment provider.
+	Payments *payments.Store
 	// Idempotency stores the answers of retried requests (see idempotent).
 	Idempotency *idempotency.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
@@ -59,6 +62,7 @@ type Server struct {
 	addresses   *addresses.Store
 	carts       *carts.Store
 	orders      *orders.Store
+	payments    *payments.Store
 	idempotency *idempotency.Store
 	menuCache   *menus.Cache
 	limiter     *ratelimit.Limiter
@@ -84,6 +88,7 @@ func NewServer(d Deps) *Server {
 		addresses:   d.Addresses,
 		carts:       d.Carts,
 		orders:      d.Orders,
+		payments:    d.Payments,
 		idempotency: d.Idempotency,
 		menuCache:   d.MenuCache,
 		limiter:     d.Limiter,

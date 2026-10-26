@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -348,5 +349,44 @@ func TestGetPaymentOverHTTP(t *testing.T) {
 				t.Errorf("got %d %s", rec.Code, rec.Body)
 			}
 		})
+	}
+}
+
+// A merchant finds its payments by its own reference, newest first, and only
+// its own: another merchant using the same reference sees nothing of them.
+func TestFindPaymentsByReference(t *testing.T) {
+	c := newClient(t)
+	ref := uuid.NewString()
+	body := func(card string) string {
+		b, _ := json.Marshal(map[string]any{"amount_kurus": 5000, "card_number": card, "reference": ref})
+		return string(b)
+	}
+	first := decodePayment(t, c.post("/v1/payments", newKey(), body(cardApprove)))
+	second := decodePayment(t, c.post("/v1/payments", newKey(), body(cardApprove)))
+
+	find := func(c *client, ref string) (int, []Payment) {
+		t.Helper()
+		rec := c.get("/v1/payments?reference=" + url.QueryEscape(ref))
+		var list paymentList
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec.Code, list.Payments
+	}
+
+	code, list := find(c, ref)
+	if code != http.StatusOK || len(list) != 2 || list[0].ID != second.ID || list[1].ID != first.ID {
+		t.Fatalf("got %d %+v, want both, newest first", code, list)
+	}
+	if code, list := find(c, uuid.NewString()); code != http.StatusOK || len(list) != 0 {
+		t.Errorf("unused reference: %d %+v, want an empty list", code, list)
+	}
+	if code, list := find(newClient(t), ref); code != http.StatusOK || len(list) != 0 {
+		t.Errorf("other merchant: %d %+v, want an empty list", code, list)
+	}
+	if rec := c.get("/v1/payments"); rec.Code != http.StatusBadRequest || errorCode(t, rec) != "reference_required" {
+		t.Errorf("no reference: %d %s", rec.Code, rec.Body)
 	}
 }

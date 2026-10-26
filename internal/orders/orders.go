@@ -128,6 +128,34 @@ type Store struct {
 	pool      *pgxpool.Pool
 	carts     *carts.Store
 	addresses *addresses.Store
+	onMove    []MoveHook
+}
+
+// MoveHook is work that must happen together with every move made through
+// the Store (Transition, ExpireUnpaid): it runs inside the move's
+// transaction, after the move, and if it fails the move is undone. The
+// payment flow uses one to note "this payment may need work now" in the same
+// commit as the move, so a crash right after can't lose that note.
+type MoveHook func(ctx context.Context, tx pgx.Tx, c Change) error
+
+// OnMove adds a hook to every move. Call it while setting up, before the
+// store is used.
+func (s *Store) OnMove(h MoveHook) {
+	s.onMove = append(s.onMove, h)
+}
+
+// moveIn is transition plus the store's hooks.
+func (s *Store) moveIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by Actor) (Change, error) {
+	c, err := transition(ctx, tx, orderID, a, by)
+	if err != nil {
+		return Change{}, err
+	}
+	for _, h := range s.onMove {
+		if err := h(ctx, tx, c); err != nil {
+			return Change{}, err
+		}
+	}
+	return c, nil
 }
 
 func NewStore(pool *pgxpool.Pool, c *carts.Store, a *addresses.Store) *Store {
@@ -148,10 +176,34 @@ func (s *Store) Transition(ctx context.Context, orderID uuid.UUID, a Action, by 
 	var c Change
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		c, err = transition(ctx, tx, orderID, a, by)
+		c, err = s.moveIn(ctx, tx, orderID, a, by)
 		return err
 	})
 	return c, err
+}
+
+// TransitionIn makes one move inside tx, for work that must happen together
+// with the move: recording a payment's answer and moving the order it paid
+// for (internal/payments). It runs no MoveHooks: the caller is the payment
+// flow itself, which already knows.
+func TransitionIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by Actor) (Change, error) {
+	return transition(ctx, tx, orderID, a, by)
+}
+
+// LockIn locks an order row inside tx (as a move does) and returns its status.
+// The payment flow locks the order first, then its payment, in that order
+// everywhere, so two transactions never each hold one and wait for the other
+// (a deadlock).
+func LockIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (Status, error) {
+	var st Status
+	err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id = $1 FOR UPDATE`, orderID).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock order: %w", err)
+	}
+	return st, nil
 }
 
 // transition makes one move inside a transaction it's given, so later work that

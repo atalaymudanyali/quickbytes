@@ -165,6 +165,48 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+    get:
+      tags: [payments]
+      operationId: findPayments
+      summary: Find payments by your own reference
+      description: |
+        Your payments whose `reference` is exactly this, newest first (an empty
+        list when there are none). For an authorize call that timed out: you
+        never got the payment's ID, but you know the reference you sent, so
+        ask here instead of authorizing again.
+      security:
+        - apiKey: []
+      parameters:
+        - name: reference
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+          example: 01928c9e-8f1a-7cc0-9b3e-5d1c2a3b4c5d
+      responses:
+        "200":
+          description: The matching payments (possibly none).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payments]
+                additionalProperties: false
+                properties:
+                  payments:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/Payment" }
+        "400":
+          description: "`reference_required`: no reference, or longer than 255 characters."
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
   /v1/payments/{payment_id}:
     get:
       tags: [payments]

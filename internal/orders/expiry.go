@@ -39,9 +39,10 @@ func (s *Store) ExpireUnpaid(ctx context.Context, payWindow time.Duration) (int,
 		if err != nil {
 			return fmt.Errorf("find unpaid orders: %w", err)
 		}
-		// The same move as any other, so each expiry gets its history row.
+		// The same move as any other, so each expiry gets its history row
+		// and runs the hooks (its payment's hold must be dropped).
 		for _, id := range ids {
-			if _, err := transition(ctx, tx, id, Expire, System); err != nil {
+			if _, err := s.moveIn(ctx, tx, id, Expire, System); err != nil {
 				return fmt.Errorf("expire order %s: %w", id, err)
 			}
 		}
