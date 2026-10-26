@@ -18,8 +18,13 @@ type Config struct {
 	MerchantKey  string
 	// SlowCardDelay is how long a payment with the slow test card stays
 	// processing before it's authorized.
-	SlowCardDelay   time.Duration
-	ShutdownTimeout time.Duration
+	SlowCardDelay time.Duration
+	// SettleEvery is how often processing payments are checked for being due.
+	SettleEvery time.Duration
+	// IdempotencyCleanupEvery is how often keys older than 24 hours are
+	// deleted.
+	IdempotencyCleanupEvery time.Duration
+	ShutdownTimeout         time.Duration
 }
 
 // minKeyLength is the shortest merchant key accepted: long enough that it
@@ -34,12 +39,16 @@ func LoadConfig() (Config, error) {
 		MerchantKey:     os.Getenv("PAYPROVIDER_MERCHANT_KEY"),
 		ShutdownTimeout: 10 * time.Second,
 	}
-	slow := getenv("SLOW_CARD_DELAY", "10s")
-	d, err := time.ParseDuration(slow)
-	if err != nil || d <= 0 {
-		return Config{}, fmt.Errorf("SLOW_CARD_DELAY must be a positive duration like 10s, got %q", slow)
+	var err error
+	if cfg.SlowCardDelay, err = getDuration("SLOW_CARD_DELAY", 10*time.Second); err != nil {
+		return Config{}, err
 	}
-	cfg.SlowCardDelay = d
+	if cfg.SettleEvery, err = getDuration("SETTLE_EVERY", time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.IdempotencyCleanupEvery, err = getDuration("IDEMPOTENCY_CLEANUP_EVERY", 10*time.Minute); err != nil {
+		return Config{}, err
+	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
@@ -47,6 +56,18 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("PAYPROVIDER_MERCHANT_KEY is required and must be at least %d characters (generate one with: echo sk_test_$(openssl rand -hex 24))", minKeyLength)
 	}
 	return cfg, nil
+}
+
+func getDuration(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration like 10s or 1m, got %q", key, v)
+	}
+	return d, nil
 }
 
 func getenv(key, fallback string) string {

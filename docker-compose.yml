@@ -71,6 +71,9 @@ services:
       # Development-only merchant key for QuickBytes. Real deployments set their
       # own, never committed. Send it as: Authorization: Bearer <key>
       PAYPROVIDER_MERCHANT_KEY: sk_test_dev_only_quickbytes_0123456789abcdef
+      # How long the slow test card's payment stays processing before it's
+      # authorized. Change it like: SLOW_CARD_DELAY=30s make up
+      SLOW_CARD_DELAY: ${SLOW_CARD_DELAY-10s}
     ports:
       - "127.0.0.1:8090:8090"
     depends_on:

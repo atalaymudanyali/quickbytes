@@ -27,6 +27,9 @@ type Server struct {
 	payments    *Payments
 	idempotency *idempotency.Store
 	logger      *slog.Logger
+	// hangFor is how long the hang test card's answer is held back (HangFor;
+	// tests shorten it).
+	hangFor time.Duration
 }
 
 // NewServer builds the HTTP side on the provider's database. payments comes in
@@ -38,6 +41,7 @@ func NewServer(db *pgxpool.Pool, payments *Payments, logger *slog.Logger) *Serve
 		payments:    payments,
 		idempotency: idempotency.NewStore(db),
 		logger:      logger,
+		hangFor:     HangFor,
 	}
 }
 

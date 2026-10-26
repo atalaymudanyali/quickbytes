@@ -15,15 +15,16 @@ side menu.
 > has started: dishes have options (sizes, extras), customers have saved delivery
 > addresses and a server-side cart priced live from the menu, and checkout turns the
 > cart into an order that moves through a state machine. Checkout is safe to retry
-> (idempotency keys). Next: the mock payment provider, then payments. See the
-> [roadmap](#roadmap).
+> (idempotency keys). A mock payment provider runs as its own service, with test
+> cards for every outcome. Next: payments in the API (authorize at checkout, capture
+> when the restaurant accepts). See the [roadmap](#roadmap).
 
 ## Quick start
 
 Needs Docker and Go 1.27+.
 
 ```bash
-make up        # start PostgreSQL, Redis and the API in Docker
+make up        # start PostgreSQL, Redis, the API and the mock payment provider in Docker
 make seed      # fill it with Istanbul demo data
 ```
 
@@ -97,6 +98,22 @@ Phase 2 so far:
   an order being paid at that moment is skipped, not waited for. Until the payment
   issues land nothing marks an order paid, so every order not cancelled first
   ends up expired.
+- **Mock payment provider:** a fake card processor, run as **its own service with
+  its own database** (`payprovider`, in the same PostgreSQL container, sharing no
+  tables), so the API will reach it only over HTTP, like Stripe or iyzico, where
+  calls can be slow, fail or arrive twice. Merchants log in with an API key (only
+  its SHA-256 is stored). It **authorizes** (holds an amount on a card), then
+  **captures** (takes it), **voids** (drops the hold) or **refunds**; any other
+  move is `409 invalid_state`, and two captures at once can't both win (the status
+  check and the change are one `UPDATE`). Every write needs an `Idempotency-Key`,
+  reusing the API's idempotency package, and the answer is stored in the payment's
+  own transaction, so a retry never holds, takes or gives back money twice. Every
+  status change is appended to an append-only history (a trigger refuses edits),
+  which webhooks will be sent from. Test cards cover approval, decline,
+  insufficient funds, a slow card (`processing`, finished later by a background
+  loop) and a card that hangs for 30 seconds. Its own OpenAPI file,
+  [`api/payprovider.yaml`](api/payprovider.yaml), is checked against every answer
+  in its tests. The API doesn't call it yet.
 
 ## Measured
 
@@ -227,6 +244,46 @@ new UUID, e.g. from `uuidgen`). The answer is the order with its history
   `ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`, place an order and keep
   reading it. After about a minute it's `cancelled` (`expired`, by `system`).
   `make up` on its own goes back to 15 minutes.
+
+### Mock payment provider
+
+`make up` also starts the provider on **http://localhost:8090**, with QuickBytes as
+its merchant. Its dev key is `sk_test_dev_only_quickbytes_0123456789abcdef`. Only
+these test cards are accepted:
+
+| Card number | What happens |
+|---|---|
+| `4242424242424242` | Approved: `201`, `authorized` |
+| `4000000000000002` | Declined: `402`, `card_declined` (the failed payment comes with it) |
+| `4000000000009995` | Not enough money: `402`, `insufficient_funds` |
+| `4000000000007777` | Slow: `201`, `processing`; `authorized` about 10 seconds later (`SLOW_CARD_DELAY`), seen with `GET` |
+| `4000000000003333` | Hang: authorized at once, but the answer comes after 30 seconds |
+
+```bash
+KEY='Authorization: Bearer sk_test_dev_only_quickbytes_0123456789abcdef'
+
+# Hold 320,00 TL. Run it twice with the same Idempotency-Key: the second answer
+# is the first one again (Idempotent-Replayed: true), still one payment.
+curl -i localhost:8090/v1/payments -H "$KEY" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-1' -d '{"amount_kurus": 32000, "card_number": "4242424242424242"}'
+
+# Take it, then try to drop the hold: 409 invalid_state ("cannot void a payment
+# that is captured"). Each new action gets a new key.
+curl localhost:8090/v1/payments/<id>/capture -X POST -H "$KEY" -H 'Idempotency-Key: demo-2'
+curl localhost:8090/v1/payments/<id>/void -X POST -H "$KEY" -H 'Idempotency-Key: demo-3'
+
+# The hang card, with a caller that gives up after 5 seconds (like the API will).
+# The call times out, yet GET shows the money is held: a timeout means "unknown",
+# not "failed".
+curl --max-time 5 localhost:8090/v1/payments -H "$KEY" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-4' -d '{"amount_kurus": 5000, "card_number": "4000000000003333", "reference": "hang-demo"}'
+docker compose exec postgres psql -U quickbytes -d payprovider \
+  -c "SELECT id, status FROM payments WHERE reference = 'hang-demo'"
+```
+
+All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments/{id}`,
+`POST /v1/payments/{id}/capture`, `/void`, `/refund`, and `GET /v1/account` (whose
+key is this?). The contract is [`api/payprovider.yaml`](api/payprovider.yaml).
 
 ### API documentation
 

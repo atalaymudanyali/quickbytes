@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/database"
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/payprovider"
 	providermigrations "github.com/atalaymudanyali/quickbytes/migrations/payprovider"
 )
@@ -52,11 +53,19 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("merchant ready", "merchant_id", merchant.ID, "name", merchant.Name)
 
+	payments := payprovider.NewPayments(pool, cfg.SlowCardDelay)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           payprovider.NewServer(pool, payprovider.NewPayments(pool, cfg.SlowCardDelay), logger).Routes(),
+		Handler:           payprovider.NewServer(pool, payments, logger).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
+		// No WriteTimeout: the hang card's answer takes 30 seconds on purpose.
 	}
+
+	// Slow-card payments get their final answer when their time comes. Both
+	// loops stop with ctx, on shutdown.
+	go payments.RunSettler(ctx, cfg.SettleEvery, logger)
+	// Idempotency keys older than 24 hours are deleted, as in the API.
+	go idempotency.NewStore(pool).RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 
 	errCh := make(chan error, 1)
 	go func() {

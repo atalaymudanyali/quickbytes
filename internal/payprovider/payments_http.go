@@ -8,12 +8,18 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 )
+
+// HangFor is how long the hang test card makes the merchant wait for its
+// answer: 30 seconds, longer than a caller should wait (the API will give up
+// sooner). The answer then arrives, if anyone is still listening.
+const HangFor = 30 * time.Second
 
 // authorizeRequest is the body of POST /v1/payments.
 type authorizeRequest struct {
@@ -56,6 +62,9 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		})
 	switch {
 	case err == nil:
+		if outcome, _ := TestCard(req.CardNumber); outcome == Hang {
+			s.hang(r.Context())
+		}
 		writeJSONBody(w, status, answer)
 	case errors.Is(err, ErrInvalidAmount):
 		writeError(w, r, http.StatusUnprocessableEntity, "amount_invalid",
@@ -68,6 +77,20 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			"this provider only accepts its test card numbers (see the README)")
 	default:
 		s.writeMoveError(w, r, err)
+	}
+}
+
+// hang holds the answer back for hangFor, or until the request ends (the
+// caller hung up, or the idempotency deadline passed). By now the payment is
+// authorized and its answer is stored, so a caller that gives up and asks
+// again (GET, or a retry with the same key) learns the money is held: the
+// situation this card exists to test. A timeout means "unknown", not "failed".
+func (s *Server) hang(ctx context.Context) {
+	t := time.NewTimer(s.hangFor)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
 	}
 }
 
