@@ -58,6 +58,25 @@ services:
       redis:
         condition: service_started
 
+  # The mock payment provider: a fake card processor playing an outside company
+  # (Stripe, iyzico). Its own database in the same Postgres container, no tables
+  # shared with the API.
+  payprovider:
+    build:
+      context: .
+      args:
+        SERVICE: payprovider
+    environment:
+      DATABASE_URL: postgres://quickbytes:quickbytes@postgres:5432/payprovider?sslmode=disable
+      # Development-only merchant key for QuickBytes. Real deployments set their
+      # own, never committed. Send it as: Authorization: Bearer <key>
+      PAYPROVIDER_MERCHANT_KEY: sk_test_dev_only_quickbytes_0123456789abcdef
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # Load-testing tool, only started by `make load-menu` (the "tools" profile
   # keeps it out of `make up`).
   k6:

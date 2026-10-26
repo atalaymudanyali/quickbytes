@@ -12,7 +12,7 @@ SEED_PASSWORD ?= quickbytes-demo
 
 .PHONY: up down db run test lint fmt seed seed-reset bench-near-me load-menu swagger-ui
 
-up: db ## Start everything (database + API) in Docker
+up: db ## Start everything (database, API, payment provider) in Docker
 	docker compose up --build -d
 
 down: ## Stop everything (data is kept in a Docker volume)
