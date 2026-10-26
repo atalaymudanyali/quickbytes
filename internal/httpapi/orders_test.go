@@ -120,11 +120,7 @@ func TestCancelAfterPayingButNotAfterExpiry(t *testing.T) {
 	me, home := f.customer(t)
 	ctx := context.Background()
 
-	f.fill(t, me)
-	paid := decode[orderDetail](t, f.checkout(t, me, home), http.StatusCreated)
-	if _, err := f.srv.orders.Transition(ctx, paid.ID, orders.Pay, orders.System); err != nil {
-		t.Fatal(err)
-	}
+	paid := f.placePaid(t, me, home)
 	c := decode[orderDetail](t, send(t, f.h, http.MethodPost, "/orders/"+paid.ID.String()+"/cancel", me, ""), http.StatusOK)
 	if c.Status != orders.Cancelled || len(c.History) != 3 || c.History[1].By != "system" {
 		t.Fatalf("cancel a paid order: %+v", c.History)
@@ -230,14 +226,14 @@ func TestOrdersArePrivate(t *testing.T) {
 	}
 }
 
-// placePaid checks a full cart out and plays the payment arriving, so the order
-// is where the restaurant's buttons start.
+// placePaid checks a full cart out with the approved card, so the order is
+// paid (its payment authorized): where the restaurant's buttons start.
 func (f orderFixture) placePaid(t *testing.T, token, addressID string) orderDetail {
 	t.Helper()
 	f.fill(t, token)
-	o := decode[orderDetail](t, f.checkout(t, token, addressID), http.StatusCreated)
-	if _, err := f.srv.orders.Transition(context.Background(), o.ID, orders.Pay, orders.System); err != nil {
-		t.Fatal(err)
+	o := decode[orderDetail](t, f.payWith(t, token, addressID, paymentstest.CardApprove), http.StatusCreated)
+	if o.Status != orders.Paid {
+		t.Fatalf("checkout with the approved card: %s, want paid", o.Status)
 	}
 	return o
 }

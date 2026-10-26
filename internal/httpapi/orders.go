@@ -228,13 +228,22 @@ func (s *Server) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 		"an order can only be cancelled before the restaurant accepts it")
 }
 
-// moveOrder makes one move on an order and answers with the order as it is
+// moveOrder makes one move on an order, then lets the money follow (capture
+// on accept, void or refund on a cancel), and answers with the order as it is
 // afterwards. refused is the message for a move the order's status doesn't
 // allow.
+//
+// The move stands even when the money step doesn't finish (the provider
+// didn't answer): the restaurant did accept. The move noted the payment as
+// due in its own commit, so the reconcile loop finishes the step.
 func (s *Server) moveOrder(w http.ResponseWriter, r *http.Request, id uuid.UUID, a orders.Action, by orders.Actor, refused string) {
 	if _, err := s.orders.Transition(r.Context(), id, a, by); err != nil {
 		s.writeOrderError(w, r, err, refused)
 		return
+	}
+	if err := s.payments.Sync(r.Context(), id); err != nil {
+		s.logger.Warn("payment step after an order move didn't finish; the reconcile loop will retry",
+			"request_id", requestIDFrom(r.Context()), "order_id", id, "action", a, "err", err)
 	}
 	o, err := s.orders.Get(r.Context(), id, by)
 	if err != nil {

@@ -2,6 +2,7 @@ package payments
 
 import (
 	"testing"
+	"time"
 
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 )
@@ -57,5 +58,25 @@ func TestStepsSettle(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Each wait is longer than the one before, up to five minutes, with at most
+// 20% jitter on top.
+func TestBackoff(t *testing.T) {
+	prev := time.Duration(0)
+	for attempts := 1; attempts <= 30; attempts++ {
+		d := backoff(attempts)
+		base := min(backoffBase<<(min(attempts, 20)-1), backoffMax)
+		if d < base || d > base+base/5 {
+			t.Fatalf("attempt %d: %v, want %v plus at most 20%%", attempts, d, base)
+		}
+		if base < backoffMax && d <= prev/2 {
+			t.Fatalf("attempt %d: %v after %v, want growth", attempts, d, prev)
+		}
+		prev = d
+	}
+	if backoff(0) < backoffBase {
+		t.Fatal("attempt 0 must still wait")
 	}
 }

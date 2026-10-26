@@ -57,6 +57,9 @@ func newTestServerWith(t *testing.T, rdb *redis.Client, provider payments.Provid
 	restaurantStore := restaurants.NewStore(pool)
 	addressStore := addresses.NewStore(pool)
 	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
+	orderStore := orders.NewStore(pool, cartStore, addressStore)
+	paymentStore := payments.NewStore(pool, provider, discardLogger())
+	orderStore.OnMove(paymentStore.MarkDueIn)
 	srv := NewServer(Deps{
 		DB:          pool,
 		Users:       users.NewStore(pool),
@@ -67,8 +70,8 @@ func newTestServerWith(t *testing.T, rdb *redis.Client, provider payments.Provid
 		Menus:       menuStore,
 		Addresses:   addressStore,
 		Carts:       cartStore,
-		Orders:      orders.NewStore(pool, cartStore, addressStore),
-		Payments:    payments.NewStore(pool, provider, discardLogger()),
+		Orders:      orderStore,
+		Payments:    paymentStore,
 		Idempotency: idempotency.NewStore(pool),
 		MenuCache:   menuCache,
 		Logger:      discardLogger(),

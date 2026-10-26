@@ -30,8 +30,9 @@ const (
 type Fake struct {
 	// BeforeCall, if set, runs at the start of every call with its name
 	// ("authorize", "capture", ...). Tests use it to hold a call open (block
-	// on a channel) or to count calls.
-	BeforeCall func(call string)
+	// on a channel). When it returns an error, the call ends with it and does
+	// nothing: return payments.ErrNoAnswer to play a timeout.
+	BeforeCall func(call string) error
 
 	mu       sync.Mutex
 	payments map[string]*payments.ProviderPayment
@@ -56,8 +57,8 @@ func NewFake() *Fake {
 
 var _ payments.Provider = (*Fake)(nil)
 
-// Calls says how many times a call was made ("authorize", ...), replays
-// included.
+// Calls says how many times a call was made ("authorize", ...), replays and
+// calls failed by BeforeCall included.
 func (f *Fake) Calls(call string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -76,17 +77,20 @@ func (f *Fake) Payments(reference string) []payments.ProviderPayment {
 	return out
 }
 
-func (f *Fake) start(call string) {
-	if f.BeforeCall != nil {
-		f.BeforeCall(call)
-	}
+func (f *Fake) start(call string) error {
 	f.mu.Lock()
 	f.calls[call]++
 	f.mu.Unlock()
+	if f.BeforeCall != nil {
+		return f.BeforeCall(call)
+	}
+	return nil
 }
 
 func (f *Fake) Authorize(_ context.Context, req payments.AuthorizeRequest) (payments.ProviderPayment, error) {
-	f.start("authorize")
+	if err := f.start("authorize"); err != nil {
+		return payments.ProviderPayment{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if a, ok := f.answers[req.Key]; ok {
@@ -132,7 +136,9 @@ var moves = map[string]struct{ from, to payments.Status }{
 }
 
 func (f *Fake) move(call, key, id string) (payments.ProviderPayment, error) {
-	f.start(call)
+	if err := f.start(call); err != nil {
+		return payments.ProviderPayment{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if a, ok := f.answers[key]; ok {
@@ -164,7 +170,9 @@ func (f *Fake) Refund(_ context.Context, key, id string) (payments.ProviderPayme
 }
 
 func (f *Fake) Get(_ context.Context, id string) (payments.ProviderPayment, error) {
-	f.start("get")
+	if err := f.start("get"); err != nil {
+		return payments.ProviderPayment{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p, ok := f.payments[id]
@@ -175,7 +183,9 @@ func (f *Fake) Get(_ context.Context, id string) (payments.ProviderPayment, erro
 }
 
 func (f *Fake) FindByReference(_ context.Context, reference string) ([]payments.ProviderPayment, error) {
-	f.start("find")
+	if err := f.start("find"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	ids := f.refs[reference]

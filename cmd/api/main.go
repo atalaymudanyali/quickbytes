@@ -87,6 +87,9 @@ func run(logger *slog.Logger) error {
 	// The one plug in the payments socket today: our mock provider over HTTP.
 	provider := payments.NewPayProvider(cfg.PayProviderURL, cfg.PayProviderKey, cfg.PayProviderTimeout)
 	paymentStore := payments.NewStore(pool, provider, logger)
+	// Every order move notes, in the same commit, that the order's payment may
+	// need work (capture, void, refund).
+	orderStore.OnMove(paymentStore.MarkDueIn)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {

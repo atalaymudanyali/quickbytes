@@ -157,10 +157,11 @@ func TestAuthorizeAfterTheOrderWasCancelled(t *testing.T) {
 	f := setupAuth(t)
 	ctx := context.Background()
 	p := f.pending(t)
-	f.provider.BeforeCall = func(string) {
+	f.provider.BeforeCall = func(string) error {
 		if _, err := f.pool.Exec(ctx, `UPDATE orders SET status = 'cancelled', cancel_reason = 'by_customer' WHERE id = $1`, p.OrderID); err != nil {
 			t.Error(err)
 		}
+		return nil
 	}
 	got, err := f.payments.Authorize(ctx, p, paymentstest.CardApprove, nil)
 	if err != nil || got.Status != payments.Authorized {

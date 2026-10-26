@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,11 +87,12 @@ func TestCheckoutRetryDuringTheCall(t *testing.T) {
 	body := checkoutBody(home, paymentstest.CardApprove)
 
 	inCall, release := make(chan struct{}), make(chan struct{})
-	f.provider.BeforeCall = func(call string) {
+	f.provider.BeforeCall = func(call string) error {
 		if call == "authorize" {
 			close(inCall)
 			<-release
 		}
+		return nil
 	}
 	first := make(chan *httptest.ResponseRecorder, 1)
 	go func() { first <- sendWithKey(t, f.h, "/orders", me, key, body) }()
@@ -181,5 +183,113 @@ func TestRestaurantDoesntSeeThePayment(t *testing.T) {
 	rec := send(t, f.h, http.MethodPost, "/orders/"+o.ID.String()+"/accept", f.owner, "")
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"payment"`) {
 		t.Fatalf("accept: %d %s; want 200 without a payment", rec.Code, rec.Body)
+	}
+}
+
+// The money follows every button: accept captures, reject or cancel of a
+// held payment voids it, reject after accepting refunds. The customer sees
+// it in the order's payment and ledger.
+func TestMoneyFollowsTheOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	cases := []struct {
+		name    string
+		buttons [][2]string // who presses what, in order: "owner"/"customer", action
+		ledger  []payments.Status
+	}{
+		{"accept", [][2]string{{"owner", "accept"}},
+			[]payments.Status{payments.Pending, payments.Authorized, payments.Captured}},
+		{"reject a paid order", [][2]string{{"owner", "reject"}},
+			[]payments.Status{payments.Pending, payments.Authorized, payments.Voided}},
+		{"reject after accepting", [][2]string{{"owner", "accept"}, {"owner", "reject"}},
+			[]payments.Status{payments.Pending, payments.Authorized, payments.Captured, payments.Refunded}},
+		{"customer cancels", [][2]string{{"customer", "cancel"}},
+			[]payments.Status{payments.Pending, payments.Authorized, payments.Voided}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			me, home := f.customer(t)
+			o := f.placePaid(t, me, home)
+			path := "/orders/" + o.ID.String()
+			for _, b := range tc.buttons {
+				token := me
+				if b[0] == "owner" {
+					token = f.owner
+				}
+				if rec := send(t, f.h, http.MethodPost, path+"/"+b[1], token, ""); rec.Code != http.StatusOK {
+					t.Fatalf("%s %s: %d %s", b[0], b[1], rec.Code, rec.Body)
+				}
+			}
+			got := decode[orderDetail](t, send(t, f.h, http.MethodGet, path, me, ""), http.StatusOK)
+			if l := ledgerOf(got.Payment); !slices.Equal(l, tc.ledger) {
+				t.Fatalf("ledger %v, want %v", l, tc.ledger)
+			}
+			if held := f.provider.Payments(o.ID.String()); len(held) != 1 || held[0].Status != tc.ledger[len(tc.ledger)-1] {
+				t.Fatalf("the provider has %+v, want one payment, %s", held, tc.ledger[len(tc.ledger)-1])
+			}
+		})
+	}
+}
+
+// The capture times out. The restaurant's accept still stands (they did
+// accept), the payment stays authorized, and it's left due for the
+// reconcile loop, which then captures it once.
+func TestAcceptStandsWhenTheCaptureTimesOut(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+	o := f.placePaid(t, me, home)
+	f.provider.BeforeCall = func(call string) error {
+		if call == "capture" {
+			return payments.ErrNoAnswer
+		}
+		return nil
+	}
+	rec := send(t, f.h, http.MethodPost, "/orders/"+o.ID.String()+"/accept", f.owner, "")
+	if a := decode[orderDetail](t, rec, http.StatusOK); a.Status != orders.Accepted {
+		t.Fatalf("accept: %s, want accepted", a.Status)
+	}
+	ctx := context.Background()
+	p, err := f.srv.payments.ForOrder(ctx, o.ID)
+	if err != nil || p.Status != payments.Authorized {
+		t.Fatalf("payment %+v, %v; want still authorized", p, err)
+	}
+	var due bool
+	if err := testutil.DB(t).QueryRow(ctx,
+		`SELECT next_check_at < now() + interval '1 hour' FROM payments WHERE order_id = $1`, o.ID).Scan(&due); err != nil || !due {
+		t.Fatalf("payment due soon: %v, %v; want true", due, err)
+	}
+
+	f.provider.BeforeCall = nil
+	if err := f.srv.payments.Sync(ctx, o.ID); err != nil { // what the loop will do
+		t.Fatal(err)
+	}
+	if held := f.provider.Payments(o.ID.String()); len(held) != 1 || held[0].Status != payments.Captured {
+		t.Fatalf("the provider has %+v, want one captured payment", held)
+	}
+}
+
+// A move notes, in its own commit, that the payment needs work, so a crash
+// right after the move (before the money step runs) loses nothing: the
+// payment is due for the reconcile loop.
+func TestMoveMarksThePaymentDue(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+	o := f.placePaid(t, me, home)
+	ctx := context.Background()
+	db := testutil.DB(t)
+	if err := f.srv.payments.Sync(ctx, o.ID); err != nil { // paid: nothing to do, off the list
+		t.Fatal(err)
+	}
+
+	var customer uuid.UUID
+	if err := db.QueryRow(ctx, `SELECT customer_profile_id FROM orders WHERE id = $1`, o.ID).Scan(&customer); err != nil {
+		t.Fatal(err)
+	}
+	// The cancel, and then "the crash": no Sync.
+	if _, err := f.srv.orders.Transition(ctx, o.ID, orders.Cancel, orders.Actor{Role: "customer", ProfileID: customer}); err != nil {
+		t.Fatal(err)
+	}
+	var due bool
+	if err := db.QueryRow(ctx, `SELECT next_check_at <= now() FROM payments WHERE order_id = $1`, o.ID).Scan(&due); err != nil || !due {
+		t.Fatalf("payment due: %v, %v; want due now", due, err)
 	}
 }
