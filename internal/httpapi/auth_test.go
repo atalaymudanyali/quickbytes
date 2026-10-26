@@ -16,6 +16,8 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments"
+	"github.com/atalaymudanyali/quickbytes/internal/payments/paymentstest"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -38,6 +40,13 @@ func newAuthTestServer(t *testing.T) (*Server, http.Handler) {
 // for tests that must cover both cases.
 func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Handler) {
 	t.Helper()
+	return newTestServerWith(t, rdb, paymentstest.NewFake())
+}
+
+// newTestServerWith is newTestServerWithRedis with a chosen payment provider:
+// tests that look at the money keep the fake to inspect or steer it.
+func newTestServerWith(t *testing.T, rdb *redis.Client, provider payments.Provider) (*Server, http.Handler) {
+	t.Helper()
 	pool := testutil.DB(t)
 	tokens, err := auth.NewTokenIssuer([]byte(strings.Repeat("k", 32)), 15*time.Minute)
 	if err != nil {
@@ -59,6 +68,7 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 		Addresses:   addressStore,
 		Carts:       cartStore,
 		Orders:      orders.NewStore(pool, cartStore, addressStore),
+		Payments:    payments.NewStore(pool, provider, discardLogger()),
 		Idempotency: idempotency.NewStore(pool),
 		MenuCache:   menuCache,
 		Logger:      discardLogger(),

@@ -11,19 +11,23 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments/paymentstest"
+	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
 // orderFixture is the cart fixture plus the server itself, for moves no endpoint
-// offers yet (the payment arriving).
+// offers, and the fake payment provider behind it.
 type orderFixture struct {
 	cartFixture
-	srv *Server
+	srv      *Server
+	provider *paymentstest.Fake
 }
 
 func newOrderFixture(t *testing.T) orderFixture {
 	t.Helper()
-	srv, h := newAuthTestServer(t)
-	return orderFixture{cartFixture: newCartFixtureWith(t, h), srv: srv}
+	fake := paymentstest.NewFake()
+	srv, h := newTestServerWith(t, testutil.RedisIfConfigured(t), fake)
+	return orderFixture{cartFixture: newCartFixtureWith(t, h), srv: srv, provider: fake}
 }
 
 // customer signs up a customer with one saved address.
@@ -46,10 +50,22 @@ func (f orderFixture) checkout(t *testing.T, token, addressID string) *httptest.
 	return f.checkoutWithKey(t, token, uuid.NewString(), addressID)
 }
 
-// checkoutWithKey sends a checkout with a chosen key, as a retry would.
+// checkoutWithKey sends a checkout with a chosen key, as a retry would. It pays
+// with the slow card, so the order stays placed (payment processing) and tests
+// can move it themselves; payment tests choose their card with payWith.
 func (f orderFixture) checkoutWithKey(t *testing.T, token, key, addressID string) *httptest.ResponseRecorder {
 	t.Helper()
-	return sendWithKey(t, f.h, "/orders", token, key, `{"address_id": "`+addressID+`"}`)
+	return sendWithKey(t, f.h, "/orders", token, key, checkoutBody(addressID, paymentstest.CardSlow))
+}
+
+// payWith checks out with a chosen card and a new key.
+func (f orderFixture) payWith(t *testing.T, token, addressID, card string) *httptest.ResponseRecorder {
+	t.Helper()
+	return sendWithKey(t, f.h, "/orders", token, uuid.NewString(), checkoutBody(addressID, card))
+}
+
+func checkoutBody(addressID, card string) string {
+	return `{"address_id": "` + addressID + `", "card_number": "` + card + `"}`
 }
 
 // sendWithKey POSTs a JSON body with an Idempotency-Key header ("": none).

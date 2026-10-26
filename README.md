@@ -83,8 +83,9 @@ Phase 2 so far:
   `409 idempotency_in_progress`; the same key with a different body is
   `422 idempotency_key_reused`. Keys live in PostgreSQL per user, with a SHA-256
   fingerprint of the request, for 24 hours. The answer is stored **in the order's
-  own transaction**, so an order never exists without its answer. Ten simultaneous
-  retries make exactly one order and ten identical answers.
+  own transaction**, so an order never exists without its answer (a first answer
+  before the card is asked, replaced by the final one after). Ten simultaneous
+  retries make exactly one order and one card authorization.
 - **Order state machine:** `placed → paid → accepted → ready → picked_up →
   delivered`, or `cancelled` with a reason (`payment_failed`, `rejected`,
   `by_customer`, `expired`). One function holds every allowed move and who may make
@@ -95,9 +96,7 @@ Phase 2 so far:
   ready; other people's orders are `404`.
 - **Expiry:** a background loop cancels orders still unpaid after 15 minutes. It
   takes them with `FOR UPDATE SKIP LOCKED`, so several API copies share the work and
-  an order being paid at that moment is skipped, not waited for. Until the payment
-  issues land nothing marks an order paid, so every order not cancelled first
-  ends up expired.
+  an order being paid at that moment is skipped, not waited for.
 - **Mock payment provider:** a fake card processor, run as **its own service with
   its own database** (`payprovider`, in the same PostgreSQL container, sharing no
   tables), so the API will reach it only over HTTP, like Stripe or iyzico, where
@@ -225,9 +224,19 @@ Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
 another tab, change the price of a dish in the cart, and `GET /cart` again.
 
 To check out, find the customer's address IDs with `GET /me/addresses` and
-`POST /orders` with `{"address_id": "..."}` and an `Idempotency-Key` header (any
-new UUID, e.g. from `uuidgen`). The answer is the order with its history
-(`placed`, by the customer), and the cart is now empty. Then:
+`POST /orders` with `{"address_id": "...", "card_number": "4242424242424242"}` and
+an `Idempotency-Key` header (any new UUID, e.g. from `uuidgen`). The card is one of
+the payment provider's test cards (below). The answer is the order with its
+history and its payment, and the cart is now empty. What the card does:
+
+| Card | Order | Payment (ledger) |
+|---|---|---|
+| `4242424242424242` | `paid` | `pending` → `authorized` |
+| `4000000000000002` | `cancelled` (`payment_failed`) | `pending` → `failed` (`card_declined`) |
+| `4000000000007777` | `placed` | `pending` → `processing` |
+| `4000000000003333` | `placed`, after a 5-second wait | `pending` → `unknown` (the provider didn't answer in time) |
+
+Then:
 
 - Send the exact same request again, same key: you get the same order back with
   `Idempotent-Replayed: true`, and `GET /orders` still shows one order. The same
@@ -237,9 +246,8 @@ new UUID, e.g. from `uuidgen`). The answer is the order with its history
   keeps the price it was placed at.
 - `POST /orders/{order_id}/cancel` cancels it (`by_customer`); a second cancel gets
   `409 invalid_transition`.
-- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue. It stays
-  empty for now: only paid orders show up, and paying arrives with the payment
-  issues.
+- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue: the paid
+  orders (approved card) show up there.
 - Watch an unpaid order expire: restart the API with a short window,
   `ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`, place an order and keep
   reading it. After about a minute it's `cancelled` (`expired`, by `system`).
@@ -319,7 +327,7 @@ against it.
 | `PATCH /cart/items/{item_id}` | Change a line's `quantity` (1–20) or `choice_ids`. |
 | `DELETE /cart/items/{item_id}` | Take a line out; taking out the last one empties the cart. |
 | `DELETE /cart` | Empty the cart, e.g. to start one at another restaurant. `204`. |
-| `POST /orders` | Check out: `{"address_id"}`, with an `Idempotency-Key` header (retries with the same key replay the first answer). Copies the cart into a `placed` order and empties the cart. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
+| `POST /orders` | Check out: `{"address_id", "card_number"}` (a test card), with an `Idempotency-Key` header (retries with the same key replay the first answer). Copies the cart into an order, empties the cart, and authorizes the card: `paid`, `cancelled` (`payment_failed`), or `placed` while the payment is `processing` or `unknown`. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
 | `GET /orders` | The customer's newest 50 orders, with their dishes. |
 | `GET /orders/{order_id}` | One order with its status history (each move, who made it, when). Someone else's gets 404. |
 | `POST /orders/{order_id}/cancel` | Cancel while `placed` or `paid`; later gets `409 invalid_transition`. |

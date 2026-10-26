@@ -2,6 +2,8 @@ package payments
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -23,15 +25,22 @@ type fixture struct {
 func setup(t *testing.T) fixture {
 	t.Helper()
 	pool := testutil.DB(t)
-	return fixture{pool: pool, payments: NewStore(pool)}
+	return fixture{pool: pool, payments: NewStore(pool, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))}
 }
 
 // newOrder writes a placed order straight into the database, with a customer
 // and a restaurant of its own. Checkout itself is tested in internal/orders.
 func (f fixture) newOrder(t *testing.T) uuid.UUID {
 	t.Helper()
+	return newOrder(t, f.pool)
+}
+
+// newOrder is fixture.newOrder for any pool (export_test.go shares it with
+// the tests outside the package).
+func newOrder(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
+	t.Helper()
 	ctx := context.Background()
-	us := users.NewStore(f.pool)
+	us := users.NewStore(pool)
 	_, customer, err := us.Create(ctx, testutil.UniqueEmail(), "hash", "Customer")
 	if err != nil {
 		t.Fatal(err)
@@ -44,14 +53,14 @@ func (f fixture) newOrder(t *testing.T) uuid.UUID {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := restaurants.NewStore(f.pool).Create(ctx, owner.ID, restaurants.New{
+	r, err := restaurants.NewStore(pool).Create(ctx, owner.ID, restaurants.New{
 		Name: "Hasan Usta", Address: "Moda Cd. 12", Lat: 40.9875, Lng: 29.0262, DeliveryRadiusM: 3000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.Must(uuid.NewV7())
-	_, err = f.pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		INSERT INTO orders (id, customer_profile_id, restaurant_id, restaurant_name,
 			address_label, address_line, address_details, address_location,
 			subtotal_kurus, delivery_fee_kurus, total_kurus)
@@ -101,8 +110,6 @@ func statuses(events []Event) []Status {
 	}
 	return out
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // A new payment starts pending, with one ledger line, and isn't due for the
 // reconcile loop until checkout's own call has had its chance.

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -81,11 +82,14 @@ func scanPayment(row pgx.Row) (Payment, error) {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	provider Provider
+	logger   *slog.Logger
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+// NewStore keeps payments in pool and moves the money through provider.
+func NewStore(pool *pgxpool.Pool, provider Provider, logger *slog.Logger) *Store {
+	return &Store{pool: pool, provider: provider, logger: logger}
 }
 
 // CreateIn writes a new payment for an order as pending, with its first
@@ -164,9 +168,26 @@ func addEvent(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID, s Status, dec
 	return nil
 }
 
+// querier is what the pool and a transaction have in common, for reads that
+// run in either.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // ForOrder returns an order's payment. ErrNotFound if it has none.
 func (s *Store) ForOrder(ctx context.Context, orderID uuid.UUID) (Payment, error) {
-	p, err := scanPayment(s.pool.QueryRow(ctx,
+	return forOrder(ctx, s.pool, orderID)
+}
+
+// ForOrderIn is ForOrder inside tx, where a payment written in tx (and not
+// yet committed) can already be seen.
+func ForOrderIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (Payment, error) {
+	return forOrder(ctx, tx, orderID)
+}
+
+func forOrder(ctx context.Context, q querier, orderID uuid.UUID) (Payment, error) {
+	p, err := scanPayment(q.QueryRow(ctx,
 		`SELECT `+paymentColumns+` FROM payments WHERE order_id = $1`, orderID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Payment{}, ErrNotFound
@@ -179,7 +200,16 @@ func (s *Store) ForOrder(ctx context.Context, orderID uuid.UUID) (Payment, error
 
 // Events returns a payment's ledger, oldest first.
 func (s *Store) Events(ctx context.Context, paymentID uuid.UUID) ([]Event, error) {
-	rows, err := s.pool.Query(ctx, `
+	return events(ctx, s.pool, paymentID)
+}
+
+// EventsIn is Events inside tx.
+func EventsIn(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID) ([]Event, error) {
+	return events(ctx, tx, paymentID)
+}
+
+func events(ctx context.Context, q querier, paymentID uuid.UUID) ([]Event, error) {
+	rows, err := q.Query(ctx, `
 		SELECT status, decline_code, via, created_at FROM payment_events
 		WHERE payment_id = $1 ORDER BY id`, paymentID)
 	if err != nil {

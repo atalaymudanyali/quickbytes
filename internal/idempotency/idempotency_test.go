@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
@@ -331,6 +332,41 @@ func TestSaveTxStoresOnlyWhatCommits(t *testing.T) {
 	_, got, err := f.store.Begin(ctx, user, "k1", checkout)
 	if err != nil || got == nil || string(got.Body) != `{"id":"order-1"}` {
 		t.Fatalf("after commit: got %+v, %v; want the answer", got, err)
+	}
+}
+
+// A stored answer can be replaced by the attempt that stored it (checkout's
+// final answer after its first one), but not before anything was stored, and
+// not by another attempt.
+func TestReplaceTxSwapsOnlyItsOwnAnswer(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	user := f.user(t)
+	c := f.mustClaim(t, user, "k1", checkout)
+	inTx := func(fn func(tx pgx.Tx) error) error { return pgx.BeginFunc(ctx, f.pool, fn) }
+
+	err := inTx(func(tx pgx.Tx) error { return ReplaceTx(ctx, tx, c, Response{Status: 201, Body: []byte(`{}`)}) })
+	if !errors.Is(err, ErrClaimLost) {
+		t.Fatalf("replace before saving: %v, want ErrClaimLost", err)
+	}
+	if err := f.store.Save(ctx, c, Response{Status: 201, Body: []byte(`{"payment":"pending"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	other := c
+	other.attempt = uuid.New()
+	err = inTx(func(tx pgx.Tx) error { return ReplaceTx(ctx, tx, other, Response{Status: 201, Body: []byte(`{}`)}) })
+	if !errors.Is(err, ErrClaimLost) {
+		t.Fatalf("replace by another attempt: %v, want ErrClaimLost", err)
+	}
+	err = inTx(func(tx pgx.Tx) error {
+		return ReplaceTx(ctx, tx, c, Response{Status: 201, Body: []byte(`{"payment":"authorized"}`)})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, got, err := f.store.Begin(ctx, user, "k1", checkout)
+	if err != nil || got == nil || string(got.Body) != `{"payment":"authorized"}` {
+		t.Fatalf("after replacing: %+v, %v; want the final answer", got, err)
 	}
 }
 

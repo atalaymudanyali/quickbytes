@@ -154,6 +154,29 @@ func (s *Store) Transition(ctx context.Context, orderID uuid.UUID, a Action, by 
 	return c, err
 }
 
+// TransitionIn makes one move inside tx, for work that must happen together
+// with the move: recording a payment's answer and moving the order it paid
+// for (internal/payments).
+func TransitionIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by Actor) (Change, error) {
+	return transition(ctx, tx, orderID, a, by)
+}
+
+// LockIn locks an order row inside tx (as a move does) and returns its status.
+// The payment flow locks the order first, then its payment, in that order
+// everywhere, so two transactions never each hold one and wait for the other
+// (a deadlock).
+func LockIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (Status, error) {
+	var st Status
+	err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id = $1 FOR UPDATE`, orderID).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock order: %w", err)
+	}
+	return st, nil
+}
+
 // transition makes one move inside a transaction it's given, so later work that
 // must happen with the move (taking the payment, publishing an event) can join
 // the same transaction.

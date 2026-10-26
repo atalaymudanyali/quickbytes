@@ -23,6 +23,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/payments"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -83,6 +84,9 @@ func run(logger *slog.Logger) error {
 	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
 	orderStore := orders.NewStore(pool, cartStore, addressStore)
 	idempotencyStore := idempotency.NewStore(pool)
+	// The one plug in the payments socket today: our mock provider over HTTP.
+	provider := payments.NewPayProvider(cfg.PayProviderURL, cfg.PayProviderKey, cfg.PayProviderTimeout)
+	paymentStore := payments.NewStore(pool, provider, logger)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
@@ -102,6 +106,7 @@ func run(logger *slog.Logger) error {
 			Addresses:   addressStore,
 			Carts:       cartStore,
 			Orders:      orderStore,
+			Payments:    paymentStore,
 			Idempotency: idempotencyStore,
 			MenuCache:   menuCache,
 			Limiter:     ratelimit.New(redisClient, logger),

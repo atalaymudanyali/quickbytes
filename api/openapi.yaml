@@ -511,9 +511,25 @@ paths:
         empties the cart. Names, prices and the address are **copied** into the
         order, so later changes to the menu or your address book never change it.
 
-        The order starts as `placed`. It moves to `paid` only through the payment
-        flow (coming in a later version); a `placed` order that isn't paid within
-        15 minutes is cancelled with reason `expired`.
+        **Payment.** The card is authorized at once: the amount is held on it,
+        and taken only when the restaurant accepts. The answer shows how that
+        went, in `status` and `payment`:
+
+        | Card answer | `status` | `payment.status` |
+        |---|---|---|
+        | Approved | `paid` | `authorized` |
+        | Declined (or not a card the provider takes) | `cancelled` (`payment_failed`) | `failed` |
+        | Still deciding (slow card) | `placed` | `processing` |
+        | No answer from the provider in time | `placed` | `unknown` |
+
+        For `processing` and `unknown`, watch the order (`GET /orders/{order_id}`):
+        the backend keeps asking the provider and moves it on. A timeout never
+        charges twice: the card is never authorized again. A `placed` order not
+        paid within 15 minutes is cancelled with reason `expired`.
+
+        Use the payment provider's test cards only (see the README), such as
+        `4242424242424242` (approved) or `4000000000000002` (declined). Only the
+        last four digits are kept.
 
         **Safe to retry.** Send an `Idempotency-Key` header: a new random value
         (a UUID) for each tap on "Place order", and the **same** value when
@@ -522,7 +538,9 @@ paths:
         status and body, with `Idempotent-Replayed: true`, so one tap never
         becomes two orders. That holds for refusals too: if the first answer
         was `409 cart_empty`, the retry gets that again. Keys are kept for 24
-        hours and belong to your account.
+        hours and belong to your account. A retry that arrives while the card is
+        still being authorized gets the order as it was before (`placed`,
+        payment `pending`); once the answer is in, retries get the final one.
       security:
         - bearerAuth: []
       parameters:
@@ -534,13 +552,13 @@ paths:
             schema: { $ref: "#/components/schemas/OrderCreate" }
       responses:
         "201":
-          description: The new order, with its history (one entry, `placed`).
+          description: The new order, with its history and its payment (see the table above).
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
             Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+              schema: { $ref: "#/components/schemas/OrderWithPayment" }
         "400": { $ref: "#/components/responses/InvalidJSONOrIdempotencyKey" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
@@ -572,7 +590,7 @@ paths:
     get:
       tags: [orders]
       operationId: getOrder
-      summary: One of your orders, with its status history
+      summary: One of your orders, with its status history and payment
       security:
         - bearerAuth: []
       responses:
@@ -582,7 +600,7 @@ paths:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+              schema: { $ref: "#/components/schemas/OrderWithPayment" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/OrderNotFound" }
@@ -606,7 +624,7 @@ paths:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OrderWithHistory" }
+              schema: { $ref: "#/components/schemas/OrderWithPayment" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/OrderNotFound" }
@@ -1587,7 +1605,7 @@ components:
               request_id: 0c045729a68d831e5cc32825
     CheckoutRejected:
       description: |
-        - `validation_failed`: some fields are invalid; `fields` names each one (e.g. an unknown `address_id`).
+        - `validation_failed`: some fields are invalid; `fields` names each one (e.g. an unknown `address_id`, or a `card_number` that isn't 12 to 19 digits).
         - `idempotency_key_reused`: this `Idempotency-Key` was already used for a different request. Use a new key for a new action.
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
@@ -1934,12 +1952,19 @@ components:
     OrderCreate:
       type: object
       additionalProperties: false
-      required: [address_id]
+      required: [address_id, card_number]
       properties:
         address_id:
           type: string
           format: uuid
           description: One of your saved addresses (`GET /me/addresses`).
+        card_number:
+          type: string
+          pattern: "^[0-9]{12,19}$"
+          description: |
+            A payment provider test card (demo only: never a real card). Sent to
+            the provider once to authorize; only the last four digits are kept.
+          example: "4242424242424242"
 
     OrderStatus:
       type: string
@@ -2041,6 +2066,63 @@ components:
               type: array
               description: Every status change, oldest first. The first entry is the order being placed (`from` is null).
               items: { $ref: "#/components/schemas/StatusChange" }
+
+    OrderWithPayment:
+      description: An order with its history and, for the customer, its payment.
+      allOf:
+        - $ref: "#/components/schemas/OrderWithHistory"
+        - type: object
+          properties:
+            payment: { $ref: "#/components/schemas/Payment" }
+
+    PaymentStatus:
+      type: string
+      enum: [pending, unknown, processing, authorized, captured, voided, refunded, failed]
+      description: |
+        `pending`: being authorized right now. `unknown`: the provider didn't
+        answer in time, and the backend is finding out (never by charging
+        again). `processing`: the card's bank hasn't decided yet.
+        `authorized`: the amount is held on the card. `captured`: taken.
+        `voided`: the hold was dropped, nothing taken. `refunded`: given back.
+        `failed`: nothing held; `decline_code` says why.
+
+    Payment:
+      type: object
+      required: [amount_kurus, status, card_last4, decline_code, created_at, updated_at, events]
+      properties:
+        amount_kurus: { type: integer, example: 120990 }
+        status: { $ref: "#/components/schemas/PaymentStatus" }
+        card_last4: { type: string, pattern: "^[0-9]{4}$", example: "4242" }
+        decline_code:
+          type: string
+          nullable: true
+          enum: [card_declined, insufficient_funds, card_rejected, no_answer, null]
+          description: |
+            Set exactly when `failed`. `card_declined`, `insufficient_funds`: the
+            card's bank said no. `card_rejected`: not a card the provider takes.
+            `no_answer`: the request never reached the provider.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        events:
+          type: array
+          description: The payment's ledger, oldest first. Lines are only ever added.
+          items: { $ref: "#/components/schemas/PaymentEvent" }
+
+    PaymentEvent:
+      type: object
+      required: [status, decline_code, via, at]
+      properties:
+        status: { $ref: "#/components/schemas/PaymentStatus" }
+        decline_code:
+          type: string
+          nullable: true
+        via:
+          type: string
+          enum: [request, reconcile]
+          description: |
+            How the backend learned it: `request` (the answer to its own call)
+            or `reconcile` (it asked the provider again later).
+        at: { type: string, format: date-time }
 
     StatusChange:
       type: object

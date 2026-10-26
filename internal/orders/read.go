@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ListLimit is how many orders a list returns: the newest ones.
@@ -36,7 +35,17 @@ func scanOrder(row pgx.Row) (Order, uuid.UUID, error) {
 // Get reads one order with its items and options. Like Transition, an order the
 // actor can't see is ErrNotFound.
 func (s *Store) Get(ctx context.Context, id uuid.UUID, by Actor) (Order, error) {
-	o, owner, err := scanOrder(s.pool.QueryRow(ctx, `
+	return get(ctx, s.pool, id, by)
+}
+
+// GetIn is Get inside tx, as the system: it sees moves made in tx that aren't
+// committed yet (checkout's answer is built this way).
+func GetIn(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Order, error) {
+	return get(ctx, tx, id, System)
+}
+
+func get(ctx context.Context, q querier, id uuid.UUID, by Actor) (Order, error) {
+	o, owner, err := scanOrder(q.QueryRow(ctx, `
 		SELECT `+orderColumns+`
 		FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
 		WHERE o.id = $1`, id))
@@ -49,7 +58,7 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID, by Actor) (Order, error) 
 	if !canSee(by, o.CustomerProfileID, owner) {
 		return Order{}, ErrNotFound
 	}
-	byOrder, err := itemsOf(ctx, s.pool, []uuid.UUID{o.ID})
+	byOrder, err := itemsOf(ctx, q, []uuid.UUID{o.ID})
 	if err != nil {
 		return Order{}, err
 	}
@@ -139,7 +148,7 @@ func (s *Store) collect(ctx context.Context, rows pgx.Rows) ([]Order, error) {
 // itemsOf reads the dishes and their options of several orders in one query.
 // Each row is a dish joined with one of its options (or with none, for a dish
 // without options); rows of the same dish come one after another.
-func itemsOf(ctx context.Context, pool *pgxpool.Pool, orderIDs []uuid.UUID) (map[uuid.UUID][]Item, error) {
+func itemsOf(ctx context.Context, q querier, orderIDs []uuid.UUID) (map[uuid.UUID][]Item, error) {
 	out := make(map[uuid.UUID][]Item, len(orderIDs))
 	for _, id := range orderIDs {
 		out[id] = []Item{}
@@ -147,7 +156,7 @@ func itemsOf(ctx context.Context, pool *pgxpool.Pool, orderIDs []uuid.UUID) (map
 	if len(orderIDs) == 0 {
 		return out, nil
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT i.order_id, i.id, i.menu_item_id, i.name, i.quantity, i.unit_price_kurus, i.line_total_kurus,
 			op.choice_id, op.group_name, op.choice_name, op.extra_price_kurus
 		FROM order_items i
@@ -214,6 +223,7 @@ func HistoryIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) ([]HistoryEntr
 // run in either.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 func history(ctx context.Context, q querier, orderID uuid.UUID) ([]HistoryEntry, error) {

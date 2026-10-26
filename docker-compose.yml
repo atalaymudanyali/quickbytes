@@ -48,11 +48,21 @@ services:
       ORDER_EXPIRY_EVERY: ${ORDER_EXPIRY_EVERY-30s}
       # How often idempotency keys older than 24 hours are deleted.
       IDEMPOTENCY_CLEANUP_EVERY: ${IDEMPOTENCY_CLEANUP_EVERY-10m}
+      # The payment provider, and QuickBytes' merchant key there (the same
+      # development key as PAYPROVIDER_MERCHANT_KEY below). A call that takes
+      # longer than PAYPROVIDER_TIMEOUT counts as unanswered.
+      PAYPROVIDER_URL: http://payprovider:8090
+      PAYPROVIDER_KEY: sk_test_dev_only_quickbytes_0123456789abcdef
+      PAYPROVIDER_TIMEOUT: ${PAYPROVIDER_TIMEOUT-5s}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      # Started first, but not waited for: a provider that's down only makes
+      # payments unknown until it's back, which the API is built to handle.
+      payprovider:
+        condition: service_started
       # Started first, but not required to be healthy: the API works without
       # its cache (it reads from the database instead).
       redis:
