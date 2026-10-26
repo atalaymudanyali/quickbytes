@@ -40,9 +40,28 @@ func (f orderFixture) fill(t *testing.T, token string) {
 	decode[carts.Cart](t, f.add(t, token, f.ayran.ID.String(), 3), http.StatusOK)
 }
 
+// checkout is one tap on "Place order": a new Idempotency-Key every time.
 func (f orderFixture) checkout(t *testing.T, token, addressID string) *httptest.ResponseRecorder {
 	t.Helper()
-	return send(t, f.h, http.MethodPost, "/orders", token, `{"address_id": "`+addressID+`"}`)
+	return f.checkoutWithKey(t, token, uuid.NewString(), addressID)
+}
+
+// checkoutWithKey sends a checkout with a chosen key, as a retry would.
+func (f orderFixture) checkoutWithKey(t *testing.T, token, key, addressID string) *httptest.ResponseRecorder {
+	t.Helper()
+	return sendWithKey(t, f.h, "/orders", token, key, `{"address_id": "`+addressID+`"}`)
+}
+
+// sendWithKey POSTs a JSON body with an Idempotency-Key header ("": none).
+func sendWithKey(t *testing.T, h http.Handler, path, token, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if key != "" {
+		req.Header.Set(idempotencyKeyHeader, key)
+	}
+	return do(t, h, req)
 }
 
 func TestCheckoutAndCancel(t *testing.T) {
@@ -124,7 +143,7 @@ func TestCheckoutRefusals(t *testing.T) {
 	t.Run("no address", func(t *testing.T) {
 		me, _ := f.customer(t)
 		f.fill(t, me)
-		e := expect(t, send(t, f.h, http.MethodPost, "/orders", me, `{}`), http.StatusUnprocessableEntity, "validation_failed")
+		e := expect(t, sendWithKey(t, f.h, "/orders", me, uuid.NewString(), `{}`), http.StatusUnprocessableEntity, "validation_failed")
 		if e.Fields["address_id"] == "" {
 			t.Fatalf("fields = %v, want address_id", e.Fields)
 		}

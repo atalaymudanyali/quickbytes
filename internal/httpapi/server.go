@@ -11,6 +11,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
@@ -37,6 +38,8 @@ type Deps struct {
 	Addresses   *addresses.Store
 	Carts       *carts.Store
 	Orders      *orders.Store
+	// Idempotency stores the answers of retried requests (see idempotent).
+	Idempotency *idempotency.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
 	// from the database), but must not be nil.
 	MenuCache *menus.Cache
@@ -56,6 +59,7 @@ type Server struct {
 	addresses   *addresses.Store
 	carts       *carts.Store
 	orders      *orders.Store
+	idempotency *idempotency.Store
 	menuCache   *menus.Cache
 	limiter     *ratelimit.Limiter
 	limits      limits
@@ -80,6 +84,7 @@ func NewServer(d Deps) *Server {
 		addresses:   d.Addresses,
 		carts:       d.Carts,
 		orders:      d.Orders,
+		idempotency: d.Idempotency,
 		menuCache:   d.MenuCache,
 		limiter:     d.Limiter,
 		limits:      defaultLimits,
@@ -134,7 +139,8 @@ func (s *Server) routes() []route {
 		{"DELETE /cart/items/{item_id}", customerOnly(s.handleRemoveCartItem)},
 
 		// Orders: checkout turns the cart into one; each customer sees only theirs.
-		{"POST /orders", customerOnly(s.handlePlaceOrder)},
+		// Checkout needs an Idempotency-Key, so a retried one never orders twice.
+		{"POST /orders", customerOnly(s.idempotent(s.handlePlaceOrder))},
 		{"GET /orders", customerOnly(s.handleListMyOrders)},
 		{"GET /orders/{order_id}", customerOnly(s.handleGetOrder)},
 		{"POST /orders/{order_id}/cancel", customerOnly(s.handleCancelOrder)},

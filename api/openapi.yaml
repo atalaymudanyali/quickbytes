@@ -514,8 +514,19 @@ paths:
         The order starts as `placed`. It moves to `paid` only through the payment
         flow (coming in a later version); a `placed` order that isn't paid within
         15 minutes is cancelled with reason `expired`.
+
+        **Safe to retry.** Send an `Idempotency-Key` header: a new random value
+        (a UUID) for each tap on "Place order", and the **same** value when
+        retrying that tap (after a timeout or a lost connection). The first
+        attempt does the work; a retry gets the first attempt's answer again,
+        status and body, with `Idempotent-Replayed: true`, so one tap never
+        becomes two orders. That holds for refusals too: if the first answer
+        was `409 cart_empty`, the retry gets that again. Keys are kept for 24
+        hours and belong to your account.
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -526,16 +537,17 @@ paths:
           description: The new order, with its history (one entry, `placed`).
           headers:
             X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderWithHistory" }
-        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "400": { $ref: "#/components/responses/InvalidJSONOrIdempotencyKey" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "409": { $ref: "#/components/responses/CheckoutConflict" }
         "413": { $ref: "#/components/responses/BodyTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
-        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "422": { $ref: "#/components/responses/CheckoutRejected" }
     get:
       tags: [orders]
       operationId: listMyOrders
@@ -1345,11 +1357,23 @@ components:
     RetryAfter:
       description: How many seconds to wait before trying again.
       schema: { type: integer, minimum: 1, example: 742 }
+    IdempotentReplayed:
+      description: Present (`true`) when this answer was stored by an earlier attempt with the same `Idempotency-Key` and is sent again, without doing the work again.
+      schema: { type: string, enum: ["true"] }
     MenuETag:
       description: A label for this exact version of the menu; it changes whenever the menu does. Send it back in `If-None-Match`.
       schema: { type: string, example: '"menu2-01a14bab-224e-7468-8920-42d59bbb55ee-v7"' }
 
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        A value of your choice that names one action: a new one per action, the
+        same one for every retry of it. 1 to 255 printable ASCII characters, no
+        spaces; a random UUID is the usual choice.
+      schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$', example: 6f1c3c1e-9a4b-4c1f-8d0e-2b7f5a9c4e21 }
     CartItemID:
       name: item_id
       in: path
@@ -1402,6 +1426,16 @@ components:
   responses:
     InvalidJSON:
       description: The body isn't valid JSON for this endpoint, has unknown fields, or contains more than one object (code `invalid_json`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidJSONOrIdempotencyKey:
+      description: |
+        - `invalid_json`: the body isn't valid JSON for this endpoint, has unknown fields, or contains more than one object.
+        - `idempotency_key_missing`: no `Idempotency-Key` header.
+        - `idempotency_key_invalid`: the `Idempotency-Key` is empty, longer than 255 characters, or has spaces or non-ASCII characters.
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
       content:
@@ -1538,8 +1572,11 @@ components:
         - `cart_changed`: the cart changed while checking out (e.g. from another device). Look at it again and retry.
         - `restaurant_not_accepting_orders`: the restaurant is paused.
         - `below_minimum`: the subtotal is below the restaurant's minimum basket.
+        - `idempotency_in_progress`: an earlier attempt with this `Idempotency-Key` is still running. Retry after `Retry-After` seconds to get its answer.
       headers:
         X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1548,6 +1585,16 @@ components:
               code: below_minimum
               message: the minimum basket is 300,00 TL; add 260,00 TL more
               request_id: 0c045729a68d831e5cc32825
+    CheckoutRejected:
+      description: |
+        - `validation_failed`: some fields are invalid; `fields` names each one (e.g. an unknown `address_id`).
+        - `idempotency_key_reused`: this `Idempotency-Key` was already used for a different request. Use a new key for a new action.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     InvalidTransition:
       description: The order's status doesn't allow this move, e.g. cancelling an order the restaurant already accepted (code `invalid_transition`).
       headers:

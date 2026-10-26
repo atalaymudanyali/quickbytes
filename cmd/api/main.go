@@ -20,6 +20,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
@@ -99,6 +100,7 @@ func run(logger *slog.Logger) error {
 			Addresses:   addressStore,
 			Carts:       cartStore,
 			Orders:      orderStore,
+			Idempotency: idempotency.NewStore(pool),
 			MenuCache:   menuCache,
 			Limiter:     ratelimit.New(redisClient, logger),
 			Logger:      logger,

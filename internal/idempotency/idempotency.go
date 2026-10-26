@@ -39,6 +39,24 @@ var (
 	ErrClaimLost = errors.New("idempotency key no longer held by this request")
 )
 
+// MaxKeyLength is the longest key accepted, like Stripe's.
+const MaxKeyLength = 255
+
+// ValidKey says whether a client's key can be used: 1 to MaxKeyLength
+// printable ASCII characters, no spaces. A UUID fits; so does anything else
+// random enough, which is the client's job.
+func ValidKey(key string) bool {
+	if len(key) == 0 || len(key) > MaxKeyLength {
+		return false
+	}
+	for i := range len(key) {
+		if key[i] < '!' || key[i] > '~' {
+			return false
+		}
+	}
+	return true
+}
+
 // Fingerprint is the SHA-256 of a request: what "the same request" means.
 type Fingerprint [sha256.Size]byte
 
