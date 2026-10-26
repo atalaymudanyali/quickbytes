@@ -112,7 +112,27 @@ Phase 2 so far:
   insufficient funds, a slow card (`processing`, finished later by a background
   loop) and a card that hangs for 30 seconds. Its own OpenAPI file,
   [`api/payprovider.yaml`](api/payprovider.yaml), is checked against every answer
-  in its tests. The API doesn't call it yet.
+  in its tests.
+- **Payments in the API:** checkout **authorizes** the card (holds the money), the
+  restaurant accepting **captures** it, a reject or cancel before that **voids**
+  the hold, and a cancel after it is **refunded**. A decline cancels the order
+  (`payment_failed`). The API reaches the provider only through a small Go
+  interface (`payments.Provider`), with one HTTP client plugged into it, and the
+  card number is never stored (only its last 4 digits). Every call carries an
+  `Idempotency-Key` made from the payment and the step (`<payment>:capture`), so a
+  retry reuses the same key and the provider moves the money once. A provider that
+  doesn't answer within 5 seconds means **`unknown`, not failed**. A background
+  reconcile loop then finds the payment at the provider by the order ID, and never
+  authorizes again. If nothing turns up after a minute, the payment fails
+  (`no_answer`). The same loop polls slow (`processing`) cards, and retries
+  captures, voids and refunds that got no answer, waiting longer each time
+  (exponential backoff with jitter). It decides what to do the thermostat way:
+  look at the order and the payment, and take the one step that brings them in
+  line. Every payment change is appended to `payment_events` (append-only, by
+  trigger) with where it came from (`request` or `reconcile`). Several API copies
+  can run the loop at once: each takes due payments with `FOR UPDATE SKIP LOCKED`
+  and a one-minute lease. The customer sees the payment and its history on the
+  order; the restaurant doesn't.
 
 ## Measured
 
@@ -161,6 +181,31 @@ these numbers compare the three setups; they don't predict a real server's capac
 
 The rate-limit checks run before the database lookup and the password hash, so a
 blocked attacker costs the server about 20 times less than a guess.
+
+### Payments: timeouts and retries
+
+`make test` runs these against the real provider over HTTP, with the API's client
+timeout cut to 300 ms so the hang card really times out
+([`internal/payments/reconcile_test.go`](internal/payments/reconcile_test.go)).
+The live numbers are from `make up` with the default 5-second timeout and
+5-second reconcile loop:
+
+| What | Result |
+|---|---|
+| Hang card at checkout (live) | Answer after **5.03 s**: order `placed`, payment `unknown` |
+| …then the reconcile loop (live) | `paid` about **9 s later**, found by the order ID; the provider holds **one** payment |
+| Slow card (live) | `processing`, then `paid` about **12 s** after checkout |
+| 10 simultaneous retries of one checkout | **1** order, **1** card authorization |
+| The same authorize sent 4 times (hang card, real provider) | **1** provider payment |
+
+Each safety net was also broken on purpose, to check a test catches it:
+
+| Broken on purpose | What the tests said |
+|---|---|
+| A fresh random key on every authorize try | `the provider has 4 payments for the order, want 1` (a double charge) |
+| No one-minute grace before "never arrived" | `young payment: failed, want still pending` |
+| Provider calls stopped when the customer's request ends | `context canceled`: an answer about real money went unrecorded |
+| The order move not marking the payment due | `payment due: false`: an accept whose capture failed would never be retried |
 
 ## Try it
 
@@ -390,6 +435,7 @@ considered, and what it costs.
 - [0005](docs/adr/0005-money-in-kurus.md) Money as whole kuruş
 - [0006](docs/adr/0006-uuidv7-ids.md) UUIDv7 for every ID
 - [0007](docs/adr/0007-rate-limiting.md) Login rate limits: slow down, never lock
+- [0008](docs/adr/0008-payments-find-out-never-charge-again.md) Payments: a timeout is "unknown", found out later, never charged again
 
 ## Roadmap
 
