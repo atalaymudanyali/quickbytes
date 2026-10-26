@@ -26,6 +26,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
+	"github.com/atalaymudanyali/quickbytes/migrations"
 )
 
 func main() {
@@ -52,7 +53,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	if err := database.Migrate(ctx, pool); err != nil {
+	if err := database.Migrate(ctx, pool, migrations.FS); err != nil {
 		return err
 	}
 

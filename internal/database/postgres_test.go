@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"testing"
+
+	"github.com/atalaymudanyali/quickbytes/migrations"
 )
 
 // These tests need a real PostgreSQL with PostGIS. Locally, `make test` starts one
@@ -27,7 +29,7 @@ func TestMigrateIsRepeatable(t *testing.T) {
 
 	// Running twice must be safe: the second run finds nothing new to apply.
 	for i := range 2 {
-		if err := Migrate(ctx, pool); err != nil {
+		if err := Migrate(ctx, pool, migrations.FS); err != nil {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/seed"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
+	"github.com/atalaymudanyali/quickbytes/migrations"
 )
 
 func main() {
@@ -57,7 +58,7 @@ func run(ctx context.Context, out io.Writer, reset bool) error {
 	}
 	defer pool.Close()
 	// The seeder may run before the API ever has, on a brand-new database.
-	if err := database.Migrate(ctx, pool); err != nil {
+	if err := database.Migrate(ctx, pool, migrations.FS); err != nil {
 		return err
 	}
 

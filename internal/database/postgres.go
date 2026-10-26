@@ -5,14 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
-
-	"github.com/atalaymudanyali/quickbytes/migrations"
 )
 
 // Connect opens a pool of reusable connections and checks the database answers.
@@ -38,23 +37,27 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Migrate brings the schema up to the newest migration. Goose records applied
-// migrations in a table, so running it again only applies new ones.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+// Migrate brings the schema up to the newest migration in set: the API's
+// (migrations.FS) or another service's, each applied to its own database.
+// Goose records applied migrations in a table in that database, so running it
+// again only applies new ones.
+func Migrate(ctx context.Context, pool *pgxpool.Pool, set fs.FS) error {
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	return migrate(ctx, db)
+	return migrate(ctx, db, set)
 }
 
-func migrate(ctx context.Context, db *sql.DB) error {
-	// Several API copies may start at once. The session locker takes a Postgres
-	// advisory lock, so only one copy applies migrations and the others wait.
+func migrate(ctx context.Context, db *sql.DB, set fs.FS) error {
+	// Several copies of a service may start at once. The session locker takes a
+	// Postgres advisory lock, so only one copy applies migrations and the
+	// others wait. Advisory locks belong to one database, so the API and the
+	// payment provider migrating at the same time don't wait for each other.
 	// Retry every second, for up to 5 minutes (the default retries every 5s).
 	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 300))
 	if err != nil {
 		return fmt.Errorf("create migration lock: %w", err)
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS,
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, set,
 		goose.WithSessionLocker(locker))
 	if err != nil {
 		return fmt.Errorf("load migrations: %w", err)

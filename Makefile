@@ -1,4 +1,6 @@
 TEST_DATABASE_URL ?= postgres://quickbytes:quickbytes@localhost:5432/quickbytes_test?sslmode=disable
+# The mock payment provider's own test database, next to the API's.
+TEST_PAYPROVIDER_DATABASE_URL ?= postgres://quickbytes:quickbytes@localhost:5432/payprovider_test?sslmode=disable
 # Database 1 of the dev Redis, so tests don't mix with the app's cache in database 0.
 TEST_REDIS_URL ?= redis://localhost:6379/1
 # The dev database and cache (the same ones `make up` uses), reached from this machine.
@@ -10,20 +12,22 @@ SEED_PASSWORD ?= quickbytes-demo
 
 .PHONY: up down db run test lint fmt seed seed-reset bench-near-me load-menu swagger-ui
 
-up: ## Start everything (database + API) in Docker
+up: db ## Start everything (database, API, payment provider) in Docker
 	docker compose up --build -d
 
 down: ## Stop everything (data is kept in a Docker volume)
 	docker compose down
 
-db: ## Start only the database and Redis
+db: ## Start only the database and Redis, and create any database that's missing
 	docker compose up -d --wait postgres redis
+	docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U quickbytes -d quickbytes -f - < scripts/init-databases.sql
 
 run: db ## Run the API on your machine against the Docker database
 	set -a && . ./.env && set +a && go run ./cmd/api
 
 test: db ## Run all tests, including the ones that need the database
-	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_REDIS_URL="$(TEST_REDIS_URL)" go test -race -count=1 ./...
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_PAYPROVIDER_DATABASE_URL="$(TEST_PAYPROVIDER_DATABASE_URL)" \
+		TEST_REDIS_URL="$(TEST_REDIS_URL)" go test -race -count=1 ./...
 
 lint: ## Check formatting and common mistakes
 	@test -z "$$(gofmt -l .)" || (echo "Not gofmt-formatted:"; gofmt -l .; exit 1)

@@ -1,0 +1,441 @@
+openapi: 3.0.3
+
+info:
+  title: QuickBytes mock payment provider
+  version: 0.1.0
+  description: |
+    A fake card processor that behaves like an outside payment company (Stripe,
+    iyzico). It runs as its own service with its own database; QuickBytes is one
+    of its merchants and talks to it only over HTTP.
+
+    **Authorize, then capture.** `POST /v1/payments` *authorizes*: it holds the
+    amount on the card without taking it. `capture` takes the held amount,
+    `void` drops the hold (nothing is taken), and `refund` gives a captured
+    amount back. Payment statuses:
+
+        processing → authorized | failed
+        authorized → captured | voided
+        captured   → refunded
+
+    A move the status doesn't allow (capturing a voided payment, refunding
+    twice) gets `409 invalid_state`, with the payment as it is.
+
+    **Test cards.** Only these numbers are accepted:
+
+    | Card number | What happens |
+    |---|---|
+    | `4242424242424242` | Approved: `201`, `authorized` |
+    | `4000000000000002` | Declined: `402`, `card_declined` |
+    | `4000000000009995` | Not enough money: `402`, `insufficient_funds` |
+    | `4000000000007777` | Slow: `201`, `processing`; becomes `authorized` later (check with `GET`) |
+    | `4000000000003333` | Hang: authorized at once, but the answer comes only after 30 seconds |
+
+    **Logging in.** Send your merchant API key as `Authorization: Bearer <key>`.
+
+    **Safe to retry.** Every `POST` needs an `Idempotency-Key` header: a new
+    random value per action, the same one for every retry of it. A retry gets
+    the first attempt's answer again (status and body, with
+    `Idempotent-Replayed: true`), so a payment is never authorized, captured or
+    refunded twice. Keys are kept for 24 hours and belong to your merchant.
+
+    **Money** is a whole number of kuruş: `32000` means 320,00 TL.
+
+servers:
+  - url: http://localhost:8090
+    description: Local development (`make up`)
+
+tags:
+  - name: health
+    description: Is the service alive and able to work?
+  - name: account
+    description: The merchant calling.
+  - name: payments
+    description: Holding, taking, releasing and giving back money on a card.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Is the process alive?
+      description: Never checks the database.
+      responses:
+        "200":
+          description: The process is running.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: Can it serve requests right now?
+      responses:
+        "200":
+          description: The database answers.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ready] }
+        "503":
+          description: The database doesn't answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/account:
+    get:
+      tags: [account]
+      operationId: getAccount
+      summary: Who am I?
+      description: The merchant your API key belongs to. An easy way to check a key works.
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Your merchant.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Merchant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /v1/payments:
+    post:
+      tags: [payments]
+      operationId: authorizePayment
+      summary: Authorize a payment (hold the amount on a card)
+      description: |
+        Holds `amount_kurus` on the card. The answer depends on the test card
+        (see the table above). A declined card still creates a payment, with
+        status `failed`; it comes back inside the `402` error.
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentCreate" }
+      responses:
+        "201":
+          description: The payment, `authorized` (or `processing` for the slow card).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "402":
+          description: |
+            The card was declined (`card_declined`) or doesn't have enough money
+            (`insufficient_funds`). `payment` is the stored payment, `failed`.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Refusal" }
+        "409": { $ref: "#/components/responses/InProgress" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422":
+          description: |
+            `amount_invalid` (not 1 to 10000000 kuruş), `reference_invalid`, or
+            `idempotency_key_reused` (the key was used for a different request).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/payments/{payment_id}:
+    get:
+      tags: [payments]
+      operationId: getPayment
+      summary: A payment as it is now
+      description: |
+        Use it when a call ended without a clear answer (it timed out): ask what
+        happened instead of trying again. Also how a slow card's final result
+        is seen.
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+      responses:
+        "200":
+          description: The payment.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+
+  /v1/payments/{payment_id}/capture:
+    post:
+      tags: [payments]
+      operationId: capturePayment
+      summary: Capture (take the held amount)
+      description: Only an `authorized` payment can be captured. The whole amount is taken.
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200": { $ref: "#/components/responses/ChangedPayment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "409": { $ref: "#/components/responses/MoveConflict" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "422": { $ref: "#/components/responses/KeyReused" }
+
+  /v1/payments/{payment_id}/void:
+    post:
+      tags: [payments]
+      operationId: voidPayment
+      summary: Void (drop the hold; nothing is taken)
+      description: Only an `authorized` payment can be voided.
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200": { $ref: "#/components/responses/ChangedPayment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "409": { $ref: "#/components/responses/MoveConflict" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "422": { $ref: "#/components/responses/KeyReused" }
+
+  /v1/payments/{payment_id}/refund:
+    post:
+      tags: [payments]
+      operationId: refundPayment
+      summary: Refund (give the whole captured amount back)
+      description: Only a `captured` payment can be refunded, once.
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200": { $ref: "#/components/responses/ChangedPayment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "409": { $ref: "#/components/responses/MoveConflict" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "422": { $ref: "#/components/responses/KeyReused" }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      description: Your merchant API key (`sk_test_...`).
+
+  headers:
+    RequestID:
+      description: A unique ID for this request, also written in the provider's log. A caller may send its own (letters, digits, `.`, `_`, `-`, up to 64 characters), so one ID can follow a request across services.
+      schema: { type: string }
+    RetryAfter:
+      description: How many seconds to wait before trying again.
+      schema: { type: integer, minimum: 1, example: 1 }
+    IdempotentReplayed:
+      description: Present (`true`) when this answer was stored by an earlier attempt with the same `Idempotency-Key` and is sent again, without moving any money.
+      schema: { type: string, enum: ["true"] }
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        A value of your choice that names one action: a new one per action, the
+        same one for every retry of it. 1 to 255 printable ASCII characters, no
+        spaces; a random UUID is the usual choice.
+      schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$', example: 6f1c3c1e-9a4b-4c1f-8d0e-2b7f5a9c4e21 }
+    PaymentID:
+      name: payment_id
+      in: path
+      required: true
+      description: The payment's `id`. Anything that isn't a UUID gets a 404.
+      schema: { type: string }
+
+  responses:
+    Unauthenticated:
+      description: "`api_key_missing` or `api_key_invalid`."
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: |
+        `invalid_json`, `unknown_test_card` (not one of the test card numbers),
+        `idempotency_key_missing` or `idempotency_key_invalid`.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InProgress:
+      description: "`idempotency_in_progress`: an earlier attempt with this key is still running. Retry after `Retry-After` seconds to get its answer."
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    MoveConflict:
+      description: |
+        `invalid_state`: the payment's status doesn't allow this move; `payment`
+        is the payment as it is. Or `idempotency_in_progress` (see `Retry-After`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    KeyReused:
+      description: "`idempotency_key_reused`: the key was used for a different request."
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PaymentNotFound:
+      description: "`payment_not_found`: no payment with this ID belongs to your merchant."
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ChangedPayment:
+      description: The payment after the move.
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Payment" }
+    BodyTooLarge:
+      description: "`body_too_large`: the body is over 64 KiB."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: "`unsupported_media_type`: the body must be sent with `Content-Type: application/json`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Merchant:
+      type: object
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: quickbytes }
+
+    PaymentCreate:
+      type: object
+      required: [amount_kurus, card_number]
+      additionalProperties: false
+      properties:
+        amount_kurus:
+          type: integer
+          minimum: 1
+          maximum: 10000000
+          description: The amount to hold, in kuruş.
+          example: 32000
+        card_number:
+          type: string
+          description: One of the test card numbers.
+          example: "4242424242424242"
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Your own label for the payment (QuickBytes sends the order ID).
+          example: 01a17880-7c89-7afd-ac33-f3935dc16620
+
+    Payment:
+      type: object
+      required: [id, amount_kurus, currency, status, card_last4, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        amount_kurus: { type: integer, minimum: 1, example: 32000 }
+        currency: { type: string, enum: [TRY] }
+        status:
+          type: string
+          enum: [processing, authorized, captured, voided, refunded, failed]
+        decline_code:
+          type: string
+          enum: [card_declined, insufficient_funds]
+          description: Only on a `failed` payment.
+        card_last4:
+          type: string
+          pattern: '^[0-9]{4}$'
+          description: The last four digits of the card. The full number is never stored.
+          example: "4242"
+        reference: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              description: Stable, for programs to check, e.g. `card_declined`, `invalid_state`.
+              example: invalid_state
+            message:
+              type: string
+              description: For people. The wording may change.
+              example: cannot capture a payment that is voided
+            request_id:
+              type: string
+              description: The same value as the `X-Request-ID` header.
+        payment:
+          $ref: "#/components/schemas/Payment"
+
+    Refusal:
+      description: An error that comes with the payment it's about.
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          required: [payment]

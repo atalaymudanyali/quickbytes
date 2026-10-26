@@ -10,7 +10,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+      - ./scripts/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U quickbytes -d quickbytes"]
       interval: 2s
@@ -57,6 +57,28 @@ services:
       # its cache (it reads from the database instead).
       redis:
         condition: service_started
+
+  # The mock payment provider: a fake card processor playing an outside company
+  # (Stripe, iyzico). Its own database in the same Postgres container, no tables
+  # shared with the API.
+  payprovider:
+    build:
+      context: .
+      args:
+        SERVICE: payprovider
+    environment:
+      DATABASE_URL: postgres://quickbytes:quickbytes@postgres:5432/payprovider?sslmode=disable
+      # Development-only merchant key for QuickBytes. Real deployments set their
+      # own, never committed. Send it as: Authorization: Bearer <key>
+      PAYPROVIDER_MERCHANT_KEY: sk_test_dev_only_quickbytes_0123456789abcdef
+      # How long the slow test card's payment stays processing before it's
+      # authorized. Change it like: SLOW_CARD_DELAY=30s make up
+      SLOW_CARD_DELAY: ${SLOW_CARD_DELAY-10s}
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Load-testing tool, only started by `make load-menu` (the "tools" profile
   # keeps it out of `make up`).
