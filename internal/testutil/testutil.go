@@ -14,6 +14,8 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
+	"github.com/atalaymudanyali/quickbytes/migrations"
+	providermigrations "github.com/atalaymudanyali/quickbytes/migrations/payprovider"
 )
 
 // DB connects to the test database and applies migrations. The test is skipped
@@ -31,7 +33,7 @@ func DB(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	// Migrate once per test binary (one per package), not once per test.
-	migrateOnce.Do(func() { migrateErr = database.Migrate(ctx, pool) })
+	migrateOnce.Do(func() { migrateErr = database.Migrate(ctx, pool, migrations.FS) })
 	if migrateErr != nil {
 		t.Fatalf("migrate test database: %v", migrateErr)
 	}
@@ -41,6 +43,35 @@ func DB(t *testing.T) *pgxpool.Pool {
 var (
 	migrateOnce sync.Once
 	migrateErr  error
+)
+
+// PayProviderDB is DB for the mock payment provider: it connects to the
+// provider's own test database (TEST_PAYPROVIDER_DATABASE_URL) and applies the
+// provider's migrations. Skipped when the variable isn't set.
+func PayProviderDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	url := os.Getenv("TEST_PAYPROVIDER_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_PAYPROVIDER_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := database.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect to payment provider test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	providerMigrateOnce.Do(func() {
+		providerMigrateErr = database.Migrate(ctx, pool, providermigrations.FS)
+	})
+	if providerMigrateErr != nil {
+		t.Fatalf("migrate payment provider test database: %v", providerMigrateErr)
+	}
+	return pool
+}
+
+var (
+	providerMigrateOnce sync.Once
+	providerMigrateErr  error
 )
 
 // UniqueEmail returns an email no other test uses. Test packages run in parallel
