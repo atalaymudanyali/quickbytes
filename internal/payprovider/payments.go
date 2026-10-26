@@ -277,6 +277,27 @@ func (p *Payments) Get(ctx context.Context, merchantID, id uuid.UUID) (Payment, 
 	return pay, nil
 }
 
+// ByReference returns the merchant's payments carrying this reference,
+// newest first. It's how a merchant finds a payment it never got the ID of:
+// its authorize call timed out, so the answer (with the ID) never arrived.
+// Usually there's at most one, but nothing stops a merchant from reusing a
+// reference, so it's a list.
+func (p *Payments) ByReference(ctx context.Context, merchantID uuid.UUID, reference string) ([]Payment, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT `+paymentColumns+` FROM payments
+		WHERE merchant_id = $1 AND reference = $2
+		ORDER BY id DESC
+		LIMIT 100`, merchantID, reference)
+	if err != nil {
+		return nil, fmt.Errorf("find payments by reference: %w", err)
+	}
+	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Payment, error) { return scanPayment(row) })
+	if err != nil {
+		return nil, fmt.Errorf("find payments by reference: %w", err)
+	}
+	return list, nil
+}
+
 // addEvent appends the status a payment just reached to its history.
 func addEvent(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID, status string) error {
 	_, err := tx.Exec(ctx,

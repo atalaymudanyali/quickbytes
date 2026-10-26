@@ -176,6 +176,30 @@ func (s *Server) handleGetPayment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// paymentList is the answer of GET /v1/payments.
+type paymentList struct {
+	Payments []Payment `json:"payments"`
+}
+
+// handleFindPayments is GET /v1/payments?reference=...: the merchant's
+// payments with that reference, newest first (an empty list when there are
+// none). A merchant whose authorize timed out has no payment ID yet, only its
+// own reference, and asks this instead of authorizing again.
+func (s *Server) handleFindPayments(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("reference")
+	if ref == "" || len(ref) > 255 {
+		writeError(w, r, http.StatusBadRequest, "reference_required",
+			"send the reference to look for: GET /v1/payments?reference=<1 to 255 characters>")
+		return
+	}
+	list, err := s.payments.ByReference(r.Context(), merchantFrom(r.Context()).ID, ref)
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, paymentList{Payments: list})
+}
+
 // paymentID reads the {payment_id} in the path. Something that isn't a UUID
 // can't be a payment, so it's a 404 like an unknown ID.
 func paymentID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

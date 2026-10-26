@@ -273,15 +273,15 @@ curl localhost:8090/v1/payments/<id>/capture -X POST -H "$KEY" -H 'Idempotency-K
 curl localhost:8090/v1/payments/<id>/void -X POST -H "$KEY" -H 'Idempotency-Key: demo-3'
 
 # The hang card, with a caller that gives up after 5 seconds (like the API will).
-# The call times out, yet GET shows the money is held: a timeout means "unknown",
-# not "failed".
+# The call times out, so we never got the payment's ID. Looking it up by our own
+# reference shows the money is held: a timeout means "unknown", not "failed".
 curl --max-time 5 localhost:8090/v1/payments -H "$KEY" -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: demo-4' -d '{"amount_kurus": 5000, "card_number": "4000000000003333", "reference": "hang-demo"}'
-docker compose exec postgres psql -U quickbytes -d payprovider \
-  -c "SELECT id, status FROM payments WHERE reference = 'hang-demo'"
+curl 'localhost:8090/v1/payments?reference=hang-demo' -H "$KEY"
 ```
 
-All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments/{id}`,
+All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments?reference=`
+(find by your own reference), `GET /v1/payments/{id}`,
 `POST /v1/payments/{id}/capture`, `/void`, `/refund`, and `GET /v1/account` (whose
 key is this?). The contract is [`api/payprovider.yaml`](api/payprovider.yaml).
 
