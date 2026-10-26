@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
@@ -183,18 +184,18 @@ func TestIllegalMovesAreRefused(t *testing.T) {
 		name   string
 		card   string
 		before []step // moves that succeed first
-		action string
+		action Action
 		move   step
 		status string // the status the refusal reports
 	}{
-		{"capture a voided payment", cardApprove, []step{p.Void}, "capture", p.Capture, StatusVoided},
-		{"capture twice", cardApprove, []step{p.Capture}, "capture", p.Capture, StatusCaptured},
-		{"refund twice", cardApprove, []step{p.Capture, p.Refund}, "refund", p.Refund, StatusRefunded},
-		{"refund before capture", cardApprove, nil, "refund", p.Refund, StatusAuthorized},
-		{"void a captured payment", cardApprove, []step{p.Capture}, "void", p.Void, StatusCaptured},
-		{"void twice", cardApprove, []step{p.Void}, "void", p.Void, StatusVoided},
-		{"capture a declined payment", cardDecline, nil, "capture", p.Capture, StatusFailed},
-		{"capture while processing", cardSlow, nil, "capture", p.Capture, StatusProcessing},
+		{"capture a voided payment", cardApprove, []step{p.Void}, ActionCapture, p.Capture, StatusVoided},
+		{"capture twice", cardApprove, []step{p.Capture}, ActionCapture, p.Capture, StatusCaptured},
+		{"refund twice", cardApprove, []step{p.Capture, p.Refund}, ActionRefund, p.Refund, StatusRefunded},
+		{"refund before capture", cardApprove, nil, ActionRefund, p.Refund, StatusAuthorized},
+		{"void a captured payment", cardApprove, []step{p.Capture}, ActionVoid, p.Void, StatusCaptured},
+		{"void twice", cardApprove, []step{p.Void}, ActionVoid, p.Void, StatusVoided},
+		{"capture a declined payment", cardDecline, nil, ActionCapture, p.Capture, StatusFailed},
+		{"capture while processing", cardSlow, nil, ActionCapture, p.Capture, StatusProcessing},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -320,5 +321,38 @@ func TestParallelCapturesCaptureOnce(t *testing.T) {
 	want := []string{StatusAuthorized, StatusCaptured}
 	if h := history(t, pool, pay.ID); !slices.Equal(h, want) {
 		t.Errorf("history = %v, want %v", h, want)
+	}
+}
+
+// A failing finish (storing the idempotent answer) undoes the whole change: no
+// money moves without its answer being stored.
+func TestFailingFinishUndoesTheChange(t *testing.T) {
+	ctx := context.Background()
+	p, pool, merchant := newPayments(t)
+	boom := errors.New("could not store the answer")
+	fail := func(context.Context, pgx.Tx, Payment) error { return boom }
+
+	ref := "finish-" + uuid.NewString()
+	_, err := p.AuthorizeAnd(ctx, merchant, AuthorizeInput{AmountKurus: 100, CardNumber: cardApprove, Reference: &ref}, fail)
+	if !errors.Is(err, boom) {
+		t.Fatalf("authorize: got %v, want the finish error", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM payments WHERE reference = $1", ref).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d payments stored, want 0", n)
+	}
+
+	pay := authorize(t, p, merchant, cardApprove)
+	if _, err := p.MoveAnd(ctx, merchant, pay.ID, ActionCapture, fail); !errors.Is(err, boom) {
+		t.Fatalf("capture: got %v, want the finish error", err)
+	}
+	if got, _ := p.Get(ctx, merchant, pay.ID); got.Status != StatusAuthorized {
+		t.Errorf("status = %s, want authorized (the capture was undone)", got.Status)
+	}
+	if h := history(t, pool, pay.ID); !slices.Equal(h, []string{StatusAuthorized}) {
+		t.Errorf("history = %v", h)
 	}
 }

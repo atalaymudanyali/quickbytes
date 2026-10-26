@@ -7,11 +7,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// newHandler is the provider's HTTP side on the test database, with every
+// answer checked against the spec.
+func newHandler(t *testing.T, pool *pgxpool.Pool) http.Handler {
+	t.Helper()
+	return validatedBySpec(t, NewServer(pool, NewPayments(pool, 10*time.Second), discardLogger()).Routes())
+}
 
 // call sends one request to the provider and returns the response.
 func call(t *testing.T, h http.Handler, method, path, key string) *httptest.ResponseRecorder {
@@ -35,7 +45,7 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func TestHealth(t *testing.T) {
-	h := NewServer(testutil.PayProviderDB(t), discardLogger()).Routes()
+	h := newHandler(t, testutil.PayProviderDB(t))
 	for _, path := range []string{"/healthz", "/readyz"} {
 		if rec := call(t, h, "GET", path, ""); rec.Code != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, rec.Code)
@@ -45,7 +55,7 @@ func TestHealth(t *testing.T) {
 
 func TestAPIKeyAuth(t *testing.T) {
 	pool := testutil.PayProviderDB(t)
-	h := NewServer(pool, discardLogger()).Routes()
+	h := newHandler(t, pool)
 	m, key := newMerchant(t, pool)
 
 	t.Run("no key", func(t *testing.T) {
@@ -85,7 +95,7 @@ func TestAPIKeyAuth(t *testing.T) {
 }
 
 func TestUnknownPathIsJSON404(t *testing.T) {
-	h := NewServer(testutil.PayProviderDB(t), discardLogger()).Routes()
+	h := newHandler(t, testutil.PayProviderDB(t))
 	rec := call(t, h, "GET", "/v1/nope", "")
 	if rec.Code != http.StatusNotFound || errorCode(t, rec) != "not_found" {
 		t.Errorf("got %d %s", rec.Code, rec.Body)

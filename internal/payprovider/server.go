@@ -14,19 +14,31 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 )
 
 // Server is the provider's HTTP side. Its middleware works like the API's
 // (internal/httpapi): a request ID, one log line per request, panics turned
 // into a 500, and the same error shape.
 type Server struct {
-	db        *pgxpool.Pool
-	merchants *Merchants
-	logger    *slog.Logger
+	db          *pgxpool.Pool
+	merchants   *Merchants
+	payments    *Payments
+	idempotency *idempotency.Store
+	logger      *slog.Logger
 }
 
-func NewServer(db *pgxpool.Pool, logger *slog.Logger) *Server {
-	return &Server{db: db, merchants: NewMerchants(db), logger: logger}
+// NewServer builds the HTTP side on the provider's database. payments comes in
+// ready-made because it carries settings (the slow card's delay).
+func NewServer(db *pgxpool.Pool, payments *Payments, logger *slog.Logger) *Server {
+	return &Server{
+		db:          db,
+		merchants:   NewMerchants(db),
+		payments:    payments,
+		idempotency: idempotency.NewStore(db),
+		logger:      logger,
+	}
 }
 
 // route is one endpoint, kept in a table so tests can compare the list with
@@ -47,6 +59,14 @@ func (s *Server) routes() []route {
 		{"GET /readyz", public(s.handleReadyz)},
 
 		{"GET /v1/account", merchantOnly(s.handleAccount)},
+
+		// Payments. Every write needs an Idempotency-Key, so a retried call
+		// never holds, takes or gives back money twice.
+		{"POST /v1/payments", merchantOnly(s.idempotent(s.handleAuthorize))},
+		{"GET /v1/payments/{payment_id}", merchantOnly(s.handleGetPayment)},
+		{"POST /v1/payments/{payment_id}/capture", merchantOnly(s.idempotent(s.handleMove(ActionCapture)))},
+		{"POST /v1/payments/{payment_id}/void", merchantOnly(s.idempotent(s.handleMove(ActionVoid)))},
+		{"POST /v1/payments/{payment_id}/refund", merchantOnly(s.idempotent(s.handleMove(ActionRefund)))},
 	}
 }
 
@@ -120,6 +140,7 @@ type ctxKey int
 const (
 	requestIDKey ctxKey = iota
 	merchantKey
+	heldKeyKey
 )
 
 // merchantFrom returns the merchant requireMerchant found. Only called behind

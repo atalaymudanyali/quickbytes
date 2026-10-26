@@ -14,8 +14,11 @@ type Config struct {
 	// MerchantName and MerchantKey describe the one merchant (QuickBytes) that
 	// may call the provider. It's created at startup if missing; a changed key
 	// replaces the old one (a key rotation).
-	MerchantName    string
-	MerchantKey     string
+	MerchantName string
+	MerchantKey  string
+	// SlowCardDelay is how long a payment with the slow test card stays
+	// processing before it's authorized.
+	SlowCardDelay   time.Duration
 	ShutdownTimeout time.Duration
 }
 
@@ -31,6 +34,12 @@ func LoadConfig() (Config, error) {
 		MerchantKey:     os.Getenv("PAYPROVIDER_MERCHANT_KEY"),
 		ShutdownTimeout: 10 * time.Second,
 	}
+	slow := getenv("SLOW_CARD_DELAY", "10s")
+	d, err := time.ParseDuration(slow)
+	if err != nil || d <= 0 {
+		return Config{}, fmt.Errorf("SLOW_CARD_DELAY must be a positive duration like 10s, got %q", slow)
+	}
+	cfg.SlowCardDelay = d
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}

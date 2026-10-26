@@ -54,7 +54,7 @@ func run(logger *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           payprovider.NewServer(pool, logger).Routes(),
+		Handler:           payprovider.NewServer(pool, payprovider.NewPayments(pool, cfg.SlowCardDelay), logger).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -52,8 +52,9 @@ var (
 // StateError says a move isn't allowed from the payment's current status, such
 // as capturing a voided payment.
 type StateError struct {
-	Action string // capture, void, refund
-	Status string // the payment's status
+	Action  Action
+	Status  string  // the payment's status
+	Payment Payment // the payment as it is, to send back with the refusal
 }
 
 func (e *StateError) Error() string {
@@ -85,6 +86,30 @@ func scanPayment(row pgx.Row) (Payment, error) {
 	return p, err
 }
 
+// Action is a move a merchant asks for on an existing payment.
+type Action string
+
+const (
+	ActionCapture Action = "capture"
+	ActionVoid    Action = "void"
+	ActionRefund  Action = "refund"
+)
+
+// moves says, for each action, which status it starts from and which it
+// reaches.
+var moves = map[Action]struct{ from, to string }{
+	ActionCapture: {StatusAuthorized, StatusCaptured},
+	ActionVoid:    {StatusAuthorized, StatusVoided},
+	ActionRefund:  {StatusCaptured, StatusRefunded},
+}
+
+// Finish is work that must happen together with a change to a payment: it runs
+// last inside the change's transaction, and if it fails, the change is undone.
+// The HTTP layer stores its idempotent answer this way, so money never moves
+// without the answer that describes it being stored too (a crash in between
+// would otherwise let a retry move it again).
+type Finish func(ctx context.Context, tx pgx.Tx, p Payment) error
+
 type Payments struct {
 	pool *pgxpool.Pool
 	// slowDelay is how long a slow card's payment stays processing.
@@ -112,6 +137,12 @@ type AuthorizeInput struct {
 // failed and a decline code. Errors are for requests that can't become a
 // payment at all (no such card, a bad amount).
 func (p *Payments) Authorize(ctx context.Context, merchantID uuid.UUID, in AuthorizeInput) (Payment, error) {
+	return p.AuthorizeAnd(ctx, merchantID, in, nil)
+}
+
+// AuthorizeAnd is Authorize, with finish (if not nil) run as the last step of
+// the payment's transaction.
+func (p *Payments) AuthorizeAnd(ctx context.Context, merchantID uuid.UUID, in AuthorizeInput, finish Finish) (Payment, error) {
 	if in.AmountKurus < 1 || in.AmountKurus > MaxAmountKurus {
 		return Payment{}, ErrInvalidAmount
 	}
@@ -154,6 +185,11 @@ func (p *Payments) Authorize(ctx context.Context, merchantID uuid.UUID, in Autho
 	if err := addEvent(ctx, tx, pay.ID, pay.Status); err != nil {
 		return Payment{}, err
 	}
+	if finish != nil {
+		if err := finish(ctx, tx, pay); err != nil {
+			return Payment{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Payment{}, fmt.Errorf("commit authorize: %w", err)
 	}
@@ -162,20 +198,21 @@ func (p *Payments) Authorize(ctx context.Context, merchantID uuid.UUID, in Autho
 
 // Capture takes the held amount of an authorized payment.
 func (p *Payments) Capture(ctx context.Context, merchantID, id uuid.UUID) (Payment, error) {
-	return p.move(ctx, merchantID, id, "capture", StatusAuthorized, StatusCaptured)
+	return p.MoveAnd(ctx, merchantID, id, ActionCapture, nil)
 }
 
 // Void drops the hold of an authorized payment; no money is ever taken.
 func (p *Payments) Void(ctx context.Context, merchantID, id uuid.UUID) (Payment, error) {
-	return p.move(ctx, merchantID, id, "void", StatusAuthorized, StatusVoided)
+	return p.MoveAnd(ctx, merchantID, id, ActionVoid, nil)
 }
 
 // Refund gives back the whole amount of a captured payment.
 func (p *Payments) Refund(ctx context.Context, merchantID, id uuid.UUID) (Payment, error) {
-	return p.move(ctx, merchantID, id, "refund", StatusCaptured, StatusRefunded)
+	return p.MoveAnd(ctx, merchantID, id, ActionRefund, nil)
 }
 
-// move changes a payment from one status to the next, and records the event.
+// MoveAnd changes a payment from one status to the next (see moves), records
+// the event, and runs finish (if not nil) last in the same transaction.
 //
 // The UPDATE only matches while the payment is still in the from status. That
 // check and the change are one statement, so two captures arriving together
@@ -183,7 +220,11 @@ func (p *Payments) Refund(ctx context.Context, merchantID, id uuid.UUID) (Paymen
 // the second wait for it; the second then sees "captured" and matches nothing.
 // (Checking with a SELECT first and updating after would leave a gap between
 // the two where both requests see "authorized".)
-func (p *Payments) move(ctx context.Context, merchantID, id uuid.UUID, action, from, to string) (Payment, error) {
+func (p *Payments) MoveAnd(ctx context.Context, merchantID, id uuid.UUID, action Action, finish Finish) (Payment, error) {
+	m, ok := moves[action]
+	if !ok {
+		return Payment{}, fmt.Errorf("unknown payment action %q", action)
+	}
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return Payment{}, fmt.Errorf("begin %s: %w", action, err)
@@ -194,7 +235,7 @@ func (p *Payments) move(ctx context.Context, merchantID, id uuid.UUID, action, f
 		UPDATE payments SET status = $4, updated_at = now()
 		WHERE id = $1 AND merchant_id = $2 AND status = $3
 		RETURNING `+paymentColumns,
-		id, merchantID, from, to))
+		id, merchantID, m.from, m.to))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Either there's no such payment (for this merchant), or it's in
 		// another status. Find out which, to answer 404 or 409.
@@ -202,13 +243,18 @@ func (p *Payments) move(ctx context.Context, merchantID, id uuid.UUID, action, f
 		if err != nil {
 			return Payment{}, err
 		}
-		return Payment{}, &StateError{Action: action, Status: current.Status}
+		return Payment{}, &StateError{Action: action, Status: current.Status, Payment: current}
 	}
 	if err != nil {
 		return Payment{}, fmt.Errorf("%s payment: %w", action, err)
 	}
 	if err := addEvent(ctx, tx, pay.ID, pay.Status); err != nil {
 		return Payment{}, err
+	}
+	if finish != nil {
+		if err := finish(ctx, tx, pay); err != nil {
+			return Payment{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Payment{}, fmt.Errorf("commit %s: %w", action, err)
