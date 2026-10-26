@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -329,5 +331,42 @@ func TestSaveTxStoresOnlyWhatCommits(t *testing.T) {
 	_, got, err := f.store.Begin(ctx, user, "k1", checkout)
 	if err != nil || got == nil || string(got.Body) != `{"id":"order-1"}` {
 		t.Fatalf("after commit: got %+v, %v; want the answer", got, err)
+	}
+}
+
+func TestRunCleanupStopsWithTheContext(t *testing.T) {
+	f := setup(t)
+	user := f.user(t)
+	f.mustClaim(t, user, "old", checkout)
+	f.age(t, user, "old", "created_at", Lifetime+time.Minute)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		f.store.RunCleanup(ctx, 10*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		close(stopped)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var left int
+		if err := f.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM idempotency_keys WHERE user_id = $1`, user).Scan(&left); err != nil {
+			t.Fatal(err)
+		}
+		if left == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the loop didn't delete the expired key")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("the loop kept running after its context was cancelled")
 	}
 }

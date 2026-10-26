@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -250,4 +251,34 @@ func (s *Store) DeleteExpired(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("delete expired idempotency keys: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// RunCleanup deletes expired keys every interval until ctx is cancelled (the
+// API shutting down). Like order expiry, it keeps going while full batches come
+// back, and a failed run is logged and tried again next time.
+func (s *Store) RunCleanup(ctx context.Context, every time.Duration, logger *slog.Logger) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		for {
+			n, err := s.DeleteExpired(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					logger.Error("delete expired idempotency keys", "err", err)
+				}
+				break
+			}
+			if n > 0 {
+				logger.Info("deleted expired idempotency keys", "count", n)
+			}
+			if n < cleanupBatch {
+				break
+			}
+		}
+	}
 }

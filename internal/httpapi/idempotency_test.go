@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,5 +275,78 @@ func takeOver(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, key string) {
 		userID, key, uuid.Must(uuid.NewV7()))
 	if err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("take the key over: %v (%d rows)", err, tag.RowsAffected())
+	}
+}
+
+// The issue's acceptance test: the same checkout sent 10 times at once, as a
+// phone retrying on a bad connection might. Each attempt behaves like the app
+// should: on 409 idempotency_in_progress it waits a moment and retries. In the
+// end there is exactly one order, and every attempt got the same answer.
+func TestTenSimultaneousRetriesMakeOneOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+	f.fill(t, me)
+	key := uuid.NewString()
+
+	const attempts = 10
+	var (
+		wg      sync.WaitGroup
+		start   = make(chan struct{})
+		mu      sync.Mutex
+		bodies  [][]byte
+		waited  int // 409s along the way
+		replays int
+	)
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				rec := f.checkoutWithKey(t, me, key, home)
+				mu.Lock()
+				if rec.Code == http.StatusConflict && decodeError(t, rec).Code == "idempotency_in_progress" {
+					waited++
+					mu.Unlock()
+					time.Sleep(10 * time.Millisecond) // the app would wait Retry-After
+					continue
+				}
+				if rec.Code != http.StatusCreated {
+					t.Errorf("attempt: %d %s", rec.Code, rec.Body)
+				}
+				if rec.Header().Get(replayedHeader) == "true" {
+					replays++
+				}
+				bodies = append(bodies, rec.Body.Bytes())
+				mu.Unlock()
+				return
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i, b := range bodies {
+		if !bytes.Equal(b, bodies[0]) {
+			t.Fatalf("answer %d differs:\n%s\nfirst:\n%s", i, b, bodies[0])
+		}
+	}
+	if len(bodies) != attempts || replays != attempts-1 {
+		t.Fatalf("%d answers, %d replays; want %d and %d", len(bodies), replays, attempts, attempts-1)
+	}
+	if n := f.orderCount(t, me); n != 1 {
+		t.Fatalf("%d orders, want 1", n)
+	}
+	t.Logf("10 attempts: 1 did the work, 9 replayed it, %d waits on 409 along the way", waited)
+
+	// And 10 more, one after another, long after: still the same answer.
+	for i := range attempts {
+		rec := f.checkoutWithKey(t, me, key, home)
+		if rec.Code != http.StatusCreated || !bytes.Equal(rec.Body.Bytes(), bodies[0]) {
+			t.Fatalf("sequential attempt %d: %d %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if n := f.orderCount(t, me); n != 1 {
+		t.Fatalf("%d orders after 20 attempts, want 1", n)
 	}
 }

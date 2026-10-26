@@ -81,6 +81,7 @@ func run(logger *slog.Logger) error {
 	// The cart prices from the same menu cache that serves public menus.
 	cartStore := carts.NewStore(pool, menuCache, restaurantStore)
 	orderStore := orders.NewStore(pool, cartStore, addressStore)
+	idempotencyStore := idempotency.NewStore(pool)
 
 	tokens, err := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
@@ -100,7 +101,7 @@ func run(logger *slog.Logger) error {
 			Addresses:   addressStore,
 			Carts:       cartStore,
 			Orders:      orderStore,
-			Idempotency: idempotency.NewStore(pool),
+			Idempotency: idempotencyStore,
 			MenuCache:   menuCache,
 			Limiter:     ratelimit.New(redisClient, logger),
 			Logger:      logger,
@@ -111,6 +112,8 @@ func run(logger *slog.Logger) error {
 	// Unpaid orders are cancelled after the pay window. The loop stops with ctx,
 	// on shutdown.
 	go orderStore.RunExpiry(ctx, cfg.OrderExpiryEvery, cfg.OrderPayWindow, logger)
+	// Idempotency keys older than 24 hours are deleted. This loop stops with ctx too.
+	go idempotencyStore.RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 
 	errCh := make(chan error, 1)
 	go func() {

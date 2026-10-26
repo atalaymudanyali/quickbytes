@@ -14,8 +14,9 @@ side menu.
 > caching, rate limits, API docs and Istanbul demo data. Phase 2 (orders and payments)
 > has started: dishes have options (sizes, extras), customers have saved delivery
 > addresses and a server-side cart priced live from the menu, and checkout turns the
-> cart into an order that moves through a state machine. Next: idempotent checkout,
-> then payments. See the [roadmap](#roadmap).
+> cart into an order that moves through a state machine. Checkout is safe to retry
+> (idempotency keys). Next: the mock payment provider, then payments. See the
+> [roadmap](#roadmap).
 
 ## Quick start
 
@@ -73,6 +74,16 @@ Phase 2 so far:
   **copies** every name, option and price and the delivery address into the order,
   and empties the cart. Later menu or address changes never alter a past order, and
   a double-tapped "Place order" gives one order, not two.
+- **Retry-safe checkout (idempotency keys):** `POST /orders` needs an
+  `Idempotency-Key` header, one random value per tap on "Place order". A retry with
+  the same key (the phone lost signal before the answer came) gets the first
+  attempt's stored answer again, byte for byte, marked `Idempotent-Replayed: true`,
+  instead of ordering again. While the first attempt still runs, retries get
+  `409 idempotency_in_progress`; the same key with a different body is
+  `422 idempotency_key_reused`. Keys live in PostgreSQL per user, with a SHA-256
+  fingerprint of the request, for 24 hours. The answer is stored **in the order's
+  own transaction**, so an order never exists without its answer. Ten simultaneous
+  retries make exactly one order and ten identical answers.
 - **Order state machine:** `placed → paid → accepted → ready → picked_up →
   delivered`, or `cancelled` with a reason (`payment_failed`, `rejected`,
   `by_customer`, `expired`). One function holds every allowed move and who may make
@@ -197,8 +208,13 @@ Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
 another tab, change the price of a dish in the cart, and `GET /cart` again.
 
 To check out, find the customer's address IDs with `GET /me/addresses` and
-`POST /orders` with `{"address_id": "..."}`. The answer is the order with its
-history (`placed`, by the customer), and the cart is now empty. Then:
+`POST /orders` with `{"address_id": "..."}` and an `Idempotency-Key` header (any
+new UUID, e.g. from `uuidgen`). The answer is the order with its history
+(`placed`, by the customer), and the cart is now empty. Then:
+
+- Send the exact same request again, same key: you get the same order back with
+  `Idempotent-Replayed: true`, and `GET /orders` still shows one order. The same
+  key with another `address_id` gets `422 idempotency_key_reused`.
 
 - Change that dish's price as `hasan@`, and `GET /orders/{order_id}`: the order
   keeps the price it was placed at.
@@ -246,7 +262,7 @@ against it.
 | `PATCH /cart/items/{item_id}` | Change a line's `quantity` (1–20) or `choice_ids`. |
 | `DELETE /cart/items/{item_id}` | Take a line out; taking out the last one empties the cart. |
 | `DELETE /cart` | Empty the cart, e.g. to start one at another restaurant. `204`. |
-| `POST /orders` | Check out: `{"address_id"}`. Copies the cart into a `placed` order and empties the cart. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
+| `POST /orders` | Check out: `{"address_id"}`, with an `Idempotency-Key` header (retries with the same key replay the first answer). Copies the cart into a `placed` order and empties the cart. `409` for an empty cart (`cart_empty`), flagged lines (`cart_has_problems`), a cart changed mid-checkout (`cart_changed`), a paused restaurant or a basket below the minimum (`below_minimum`). |
 | `GET /orders` | The customer's newest 50 orders, with their dishes. |
 | `GET /orders/{order_id}` | One order with its status history (each move, who made it, when). Someone else's gets 404. |
 | `POST /orders/{order_id}/cancel` | Cancel while `placed` or `paid`; later gets `409 invalid_transition`. |

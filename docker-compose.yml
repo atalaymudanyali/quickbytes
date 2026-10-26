@@ -46,6 +46,8 @@ services:
       # Shorten them to watch an order expire: ORDER_PAY_WINDOW=1m make up
       ORDER_PAY_WINDOW: ${ORDER_PAY_WINDOW-15m}
       ORDER_EXPIRY_EVERY: ${ORDER_EXPIRY_EVERY-30s}
+      # How often idempotency keys older than 24 hours are deleted.
+      IDEMPOTENCY_CLEANUP_EVERY: ${IDEMPOTENCY_CLEANUP_EVERY-10m}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
