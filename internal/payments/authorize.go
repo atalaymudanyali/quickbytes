@@ -77,6 +77,14 @@ func (s *Store) Authorize(ctx context.Context, p Payment, cardNumber string, fin
 		if out, err = s.recordIn(ctx, tx, p, c, ViaRequest); err != nil {
 			return err
 		}
+		if out.Status == Unknown || out.Status == Processing {
+			// Something to find out: the reconcile loop starts asking soon,
+			// not after the grace meant for a payment still pending.
+			if _, err := tx.Exec(ctx, `UPDATE payments SET next_check_at = now() + make_interval(secs => $2) WHERE id = $1`,
+				p.ID, backoffBase.Seconds()); err != nil {
+				return fmt.Errorf("schedule the first check: %w", err)
+			}
+		}
 		if finish != nil {
 			return finish(ctx, tx, out)
 		}

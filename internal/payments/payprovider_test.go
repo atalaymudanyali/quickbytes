@@ -37,6 +37,15 @@ const testTimeout = 300 * time.Millisecond
 // plug connected to it.
 func newProvider(t *testing.T) *PayProvider {
 	t.Helper()
+	p, _ := newProviderWith(t, 10*time.Second)
+	return p
+}
+
+// newProviderWith is newProvider with the slow card's delay chosen, and the
+// provider's own payments, so a test can settle slow payments (as its
+// settler loop would).
+func newProviderWith(t *testing.T, slowDelay time.Duration) (*PayProvider, *payprovider.Payments) {
+	t.Helper()
 	pool := testutil.PayProviderDB(t)
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
@@ -45,9 +54,10 @@ func newProvider(t *testing.T) *PayProvider {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(payprovider.NewServer(pool, payprovider.NewPayments(pool, 10*time.Second), logger).Routes())
+	pp := payprovider.NewPayments(pool, slowDelay)
+	srv := httptest.NewServer(payprovider.NewServer(pool, pp, logger).Routes())
 	t.Cleanup(srv.Close)
-	return NewPayProvider(srv.URL, key, testTimeout)
+	return NewPayProvider(srv.URL, key, testTimeout), pp
 }
 
 func authorizeReq(card string) AuthorizeRequest {

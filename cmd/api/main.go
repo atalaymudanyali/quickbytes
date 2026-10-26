@@ -121,6 +121,9 @@ func run(logger *slog.Logger) error {
 	// Unpaid orders are cancelled after the pay window. The loop stops with ctx,
 	// on shutdown.
 	go orderStore.RunExpiry(ctx, cfg.OrderExpiryEvery, cfg.OrderPayWindow, logger)
+	// Payments that need work (an unknown result, a slow card, a money step
+	// that didn't go through) are settled with the provider. Stops with ctx.
+	go paymentStore.RunReconcile(ctx, cfg.PaymentReconcileEvery, logger)
 	// Idempotency keys older than 24 hours are deleted. This loop stops with ctx too.
 	go idempotencyStore.RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 

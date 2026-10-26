@@ -54,6 +54,8 @@ services:
       PAYPROVIDER_URL: http://payprovider:8090
       PAYPROVIDER_KEY: sk_test_dev_only_quickbytes_0123456789abcdef
       PAYPROVIDER_TIMEOUT: ${PAYPROVIDER_TIMEOUT-5s}
+      # How often the reconcile loop settles payments that need work.
+      PAYMENT_RECONCILE_EVERY: ${PAYMENT_RECONCILE_EVERY-5s}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

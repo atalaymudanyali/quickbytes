@@ -233,8 +233,12 @@ history and its payment, and the cart is now empty. What the card does:
 |---|---|---|
 | `4242424242424242` | `paid` | `pending` → `authorized` |
 | `4000000000000002` | `cancelled` (`payment_failed`) | `pending` → `failed` (`card_declined`) |
-| `4000000000007777` | `placed` | `pending` → `processing` |
-| `4000000000003333` | `placed`, after a 5-second wait | `pending` → `unknown` (the provider didn't answer in time) |
+| `4000000000007777` | `placed`, then `paid` about 10 seconds later | `pending` → `processing` → `authorized` (via `reconcile`) |
+| `4000000000003333` | `placed` after a 5-second wait, then `paid` seconds later | `pending` → `unknown` (no answer in time) → `authorized` (via `reconcile`) |
+
+Keep reading the order (`GET /orders/{order_id}`) to watch the last two settle: the
+API's reconcile loop asks the provider every few seconds, finding the hang card's
+payment by the order ID instead of charging again.
 
 Then:
 

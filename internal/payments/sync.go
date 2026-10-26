@@ -58,7 +58,15 @@ func (s *Store) MarkDueIn(ctx context.Context, tx pgx.Tx, c orders.Change) error
 //
 // Like Authorize, it isn't stopped by ctx being cancelled: once a call may
 // move money, we want to record its answer.
+//
+// Sync is the request's quick version: finding out about a payment we have
+// no answer for (Lookup, Check) is left to the reconcile loop, which runs
+// the same steps with ViaReconcile and does those too.
 func (s *Store) Sync(ctx context.Context, orderID uuid.UUID) error {
+	return s.sync(ctx, orderID, ViaRequest)
+}
+
+func (s *Store) sync(ctx context.Context, orderID uuid.UUID, via Via) error {
 	ctx = context.WithoutCancel(ctx)
 	for range maxSyncSteps {
 		p, step, err := s.decide(ctx, orderID)
@@ -74,11 +82,17 @@ func (s *Store) Sync(ctx context.Context, orderID uuid.UUID) error {
 		case PayOrder, FailOrder:
 			continue // decide already moved the order
 		case Capture, Void, Refund:
-			if err := s.move(ctx, p, step); err != nil {
+			if err := s.move(ctx, p, step, via); err != nil {
 				return err
 			}
 		case Lookup, Check:
-			return nil // finding out is the reconcile loop's job
+			if via != ViaReconcile {
+				return nil // finding out is the reconcile loop's job
+			}
+			learned, err := s.findOut(ctx, p, step)
+			if err != nil || !learned {
+				return err
+			}
 		}
 	}
 	return s.tryLater(ctx, orderID, fmt.Errorf("payment didn't settle in %d steps", maxSyncSteps))
@@ -122,7 +136,7 @@ func (s *Store) decide(ctx context.Context, orderID uuid.UUID) (Payment, Step, e
 }
 
 // move asks the provider for one money step and records the answer.
-func (s *Store) move(ctx context.Context, p Payment, step Step) error {
+func (s *Store) move(ctx context.Context, p Payment, step Step, via Via) error {
 	call := map[Step]func(context.Context, string, string) (ProviderPayment, error){
 		Capture: s.provider.Capture,
 		Void:    s.provider.Void,
@@ -133,7 +147,7 @@ func (s *Store) move(ctx context.Context, p Payment, step Step) error {
 		return s.tryLater(ctx, p.OrderID, fmt.Errorf("%s payment %s: %w", step, p.ID, err))
 	}
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		_, err := s.recordIn(ctx, tx, p, Change{Status: answer.Status, ProviderPaymentID: &answer.ID, DeclineCode: answer.DeclineCode}, ViaRequest)
+		_, err := s.recordIn(ctx, tx, p, Change{Status: answer.Status, ProviderPaymentID: &answer.ID, DeclineCode: answer.DeclineCode}, via)
 		return err
 	})
 	if err != nil {
@@ -148,9 +162,91 @@ func (s *Store) move(ctx context.Context, p Payment, step Step) error {
 	return nil
 }
 
+// findOut asks the provider about a payment we have no answer for, and
+// records what it says. It reports whether we learned something new: when
+// not, the payment waits (backoff) and Sync stops for now.
+//
+//   - Check (processing, the slow card): GET it by its ID.
+//   - Lookup (pending or unknown: we never heard back from authorize): find it
+//     by our reference, the order ID. Never by authorizing again: we don't
+//     even have the card number any more.
+//
+// A Lookup that finds nothing means the authorize never reached the
+// provider, but only once AuthorizeGrace has passed since we wrote the
+// payment: until then the request could still be on its way. After it, the
+// payment is failed (no_answer) and the order is cancelled like a decline.
+func (s *Store) findOut(ctx context.Context, p Payment, step Step) (bool, error) {
+	var answer ProviderPayment
+	var err error
+	if step == Check {
+		answer, err = s.provider.Get(ctx, *p.ProviderPaymentID)
+	} else {
+		var found []ProviderPayment
+		found, err = s.provider.FindByReference(ctx, p.OrderID.String())
+		switch {
+		case err != nil:
+		case len(found) == 0 && time.Since(p.CreatedAt) < AuthorizeGrace:
+			return false, s.waitFor(ctx, p, "authorize not seen at the provider yet")
+		case len(found) == 0:
+			s.logger.Warn("authorize never reached the provider; failing the payment",
+				"payment_id", p.ID, "order_id", p.OrderID)
+			return true, s.record(ctx, p, Change{Status: Failed, DeclineCode: ptr(NoAnswer)})
+		default:
+			if len(found) > 1 {
+				// One key per payment makes this impossible; if it happens
+				// anyway, someone must look at the extra holds.
+				s.logger.Error("several provider payments for one order; using the newest",
+					"payment_id", p.ID, "order_id", p.OrderID, "count", len(found))
+			}
+			answer = found[0]
+		}
+	}
+	if err != nil {
+		return false, s.tryLater(ctx, p.OrderID, fmt.Errorf("%s payment %s: %w", step, p.ID, err))
+	}
+	if answer.AmountKurus != p.AmountKurus {
+		return false, s.tryLater(ctx, p.OrderID, fmt.Errorf("provider payment %s is for %d kuruş, ours %s is for %d",
+			answer.ID, answer.AmountKurus, p.ID, p.AmountKurus))
+	}
+	if answer.Status == p.Status {
+		return false, s.waitFor(ctx, p, "still "+string(p.Status))
+	}
+	return true, s.record(ctx, p, Change{Status: answer.Status, ProviderPaymentID: &answer.ID, DeclineCode: answer.DeclineCode})
+}
+
+// record writes what the reconcile loop learned.
+func (s *Store) record(ctx context.Context, p Payment, c Change) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		_, err := s.recordIn(ctx, tx, p, c, ViaReconcile)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("record what the provider said: %w", err)
+	}
+	return nil
+}
+
+// waitFor is tryLater for a payment that is fine, just not settled yet (the
+// slow card still processing): it waits the same way, but it isn't an error.
+func (s *Store) waitFor(ctx context.Context, p Payment, why string) error {
+	if err := s.later(ctx, p.OrderID); err != nil {
+		return fmt.Errorf("%s: %w", why, err)
+	}
+	return nil
+}
+
 // tryLater counts a failed try and pushes the payment's next check back
 // (backoff), then returns cause. The order is untouched.
 func (s *Store) tryLater(ctx context.Context, orderID uuid.UUID, cause error) error {
+	if err := s.later(ctx, orderID); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+// later counts one more try and pushes the payment's next check back by the
+// backoff for that many tries.
+func (s *Store) later(ctx context.Context, orderID uuid.UUID) error {
 	var attempts int
 	err := s.pool.QueryRow(ctx,
 		`UPDATE payments SET attempts = attempts + 1 WHERE order_id = $1 RETURNING attempts`, orderID).Scan(&attempts)
@@ -160,9 +256,9 @@ func (s *Store) tryLater(ctx context.Context, orderID uuid.UUID, cause error) er
 			orderID, backoff(attempts).Seconds())
 	}
 	if err != nil {
-		return errors.Join(cause, fmt.Errorf("schedule the next try: %w", err))
+		return fmt.Errorf("schedule the next try: %w", err)
 	}
-	return cause
+	return nil
 }
 
 // backoff is how long to wait after the attempts-th failed try in a row:

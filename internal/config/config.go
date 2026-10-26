@@ -31,6 +31,10 @@ type Config struct {
 	PayProviderURL     string
 	PayProviderKey     string
 	PayProviderTimeout time.Duration
+	// PaymentReconcileEvery is how often the reconcile loop looks for
+	// payments that need work (an unknown result, a slow card, a capture
+	// that didn't go through).
+	PaymentReconcileEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -58,6 +62,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.PayProviderTimeout, err = getDuration("PAYPROVIDER_TIMEOUT", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.PaymentReconcileEvery, err = getDuration("PAYMENT_RECONCILE_EVERY", 5*time.Second); err != nil {
 		return Config{}, err
 	}
 	if cfg.DatabaseURL == "" {
