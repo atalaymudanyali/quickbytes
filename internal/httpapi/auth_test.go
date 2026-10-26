@@ -13,6 +13,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -58,6 +59,7 @@ func newTestServerWithRedis(t *testing.T, rdb *redis.Client) (*Server, http.Hand
 		Addresses:   addressStore,
 		Carts:       cartStore,
 		Orders:      orders.NewStore(pool, cartStore, addressStore),
+		Idempotency: idempotency.NewStore(pool),
 		MenuCache:   menuCache,
 		Logger:      discardLogger(),
 	})

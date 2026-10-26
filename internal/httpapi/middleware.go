@@ -20,6 +20,7 @@ type ctxKey int
 const (
 	requestIDKey ctxKey = iota
 	claimsKey
+	heldKeyKey
 )
 
 // validRequestID limits IDs accepted from clients, so nobody can inject huge values

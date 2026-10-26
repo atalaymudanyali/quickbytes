@@ -22,6 +22,9 @@ type Config struct {
 	// it's cancelled as expired; OrderExpiryEvery is how often that's checked.
 	OrderPayWindow   time.Duration
 	OrderExpiryEvery time.Duration
+	// IdempotencyCleanupEvery is how often idempotency keys older than 24
+	// hours are deleted.
+	IdempotencyCleanupEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -41,6 +44,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OrderExpiryEvery, err = getDuration("ORDER_EXPIRY_EVERY", 30*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.IdempotencyCleanupEvery, err = getDuration("IDEMPOTENCY_CLEANUP_EVERY", 10*time.Minute); err != nil {
 		return Config{}, err
 	}
 	if cfg.DatabaseURL == "" {

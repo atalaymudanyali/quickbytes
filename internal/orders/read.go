@@ -201,7 +201,23 @@ type HistoryEntry struct {
 // History returns an order's status changes, oldest first. It doesn't check who
 // is asking: call it after Get, which does.
 func (s *Store) History(ctx context.Context, orderID uuid.UUID) ([]HistoryEntry, error) {
-	rows, err := s.pool.Query(ctx, `
+	return history(ctx, s.pool, orderID)
+}
+
+// HistoryIn is History read inside tx, where an order placed in tx (and not yet
+// committed) can already be seen.
+func HistoryIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) ([]HistoryEntry, error) {
+	return history(ctx, tx, orderID)
+}
+
+// querier is what the pool and a transaction have in common, for reads that
+// run in either.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func history(ctx context.Context, q querier, orderID uuid.UUID) ([]HistoryEntry, error) {
+	rows, err := q.Query(ctx, `
 		SELECT from_status, to_status, cancel_reason, by_role, created_at
 		FROM order_status_history WHERE order_id = $1
 		ORDER BY created_at, id`, orderID)
