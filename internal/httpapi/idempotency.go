@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 )
 
@@ -36,6 +38,10 @@ const (
 // Answers below 500 are final ("your cart is empty" stays the answer to that
 // attempt) and are stored. A 500 (or a panic) means something broke midway,
 // so the key is released and the next attempt runs the handler again.
+//
+// A handler whose work is a transaction should store its answer inside it,
+// with saveAnswerIn, so the work and its answer commit together; the answer is
+// then not stored a second time here.
 func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get(idempotencyKeyHeader)
@@ -81,9 +87,7 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			return
 		case stored != nil:
 			w.Header().Set(replayedHeader, "true")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(stored.Status)
-			_, _ = w.Write(stored.Body)
+			writeJSONBody(w, stored.Status, stored.Body)
 			return
 		}
 
@@ -98,13 +102,18 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}()
 
-		ctx, cancel := context.WithTimeout(r.Context(), requestDeadline)
+		held := &heldKey{claim: claim}
+		ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), heldKeyKey, held), requestDeadline)
 		defer cancel()
 		rec := &responseCopy{ResponseWriter: w, status: http.StatusOK}
 		next(rec, r.WithContext(ctx))
 
 		if rec.status >= 500 {
+			// Its transaction (and any answer stored in it) rolled back.
 			s.releaseKey(after, r, claim)
+			return
+		}
+		if held.saved {
 			return
 		}
 		err = s.idempotency.Save(after, claim, idempotency.Response{Status: rec.status, Body: rec.body.Bytes()})
@@ -114,6 +123,32 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			s.logger.Error("save idempotent response", "request_id", requestIDFrom(r.Context()), "err", err)
 		}
 	}
+}
+
+// heldKey is the key the current request holds, for saveAnswerIn.
+type heldKey struct {
+	claim idempotency.Claim
+	saved bool // the handler stored the answer itself
+}
+
+// saveAnswerIn stores the answer to the request's Idempotency-Key inside tx, so
+// it commits or rolls back with the work. The handler must then send exactly
+// status and body. Outside idempotent it does nothing.
+//
+// It returns idempotency.ErrClaimLost if another attempt took the key over:
+// that attempt's answer is the one to keep, so this one must roll back.
+func saveAnswerIn(ctx context.Context, tx pgx.Tx, status int, body []byte) error {
+	held, ok := ctx.Value(heldKeyKey).(*heldKey)
+	if !ok {
+		return nil
+	}
+	if err := idempotency.SaveTx(ctx, tx, held.claim, idempotency.Response{Status: status, Body: body}); err != nil {
+		return err
+	}
+	// If the commit then fails, the handler answers 500 and the key is
+	// released, so this flag never hides a lost answer.
+	held.saved = true
+	return nil
 }
 
 func (s *Server) releaseKey(ctx context.Context, r *http.Request, c idempotency.Claim) {

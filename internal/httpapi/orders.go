@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
+	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
 )
@@ -28,6 +31,11 @@ type orderList struct {
 }
 
 // handlePlaceOrder turns the customer's cart into an order (checkout).
+//
+// The answer (the new order with its history) is built and stored for the
+// Idempotency-Key inside the order's own transaction, so a placed order always
+// has its stored answer: a retry can only ever replay it, never find the key
+// unfinished with an order behind it.
 func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 	var req placeOrderRequest
 	if !decodeJSON(w, r, &req) {
@@ -42,11 +50,27 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	o, err := s.orders.Place(r.Context(), customer, *req.AddressID)
+	var answer []byte
+	_, err := s.orders.PlaceAnd(r.Context(), customer, *req.AddressID, func(ctx context.Context, tx pgx.Tx, o orders.Order) error {
+		h, err := orders.HistoryIn(ctx, tx, o.ID)
+		if err != nil {
+			return err
+		}
+		if answer, err = jsonBody(orderDetail{Order: o, History: h}); err != nil {
+			return err
+		}
+		return saveAnswerIn(ctx, tx, http.StatusCreated, answer)
+	})
 	var below *orders.BelowMinimumError
 	switch {
 	case err == nil:
-		s.writeOrder(w, r, http.StatusCreated, o)
+		writeJSONBody(w, http.StatusCreated, answer)
+	case errors.Is(err, idempotency.ErrClaimLost):
+		// This attempt ran so long that a retry took its key over. Nothing was
+		// ordered here; the retry's answer is the one that counts.
+		w.Header().Set("Retry-After", "1")
+		writeError(w, r, http.StatusConflict, "idempotency_in_progress",
+			"a newer attempt with this Idempotency-Key is being handled; retry shortly to get its answer")
 	case errors.Is(err, addresses.ErrNotFound):
 		writeValidationError(w, r, map[string]string{"address_id": "no such address"})
 	case errors.Is(err, orders.ErrCartEmpty):

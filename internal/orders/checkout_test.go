@@ -475,3 +475,52 @@ func TestKitchenList(t *testing.T) {
 		t.Fatalf("another owner: got %v, want ErrRestaurantNotFound", err)
 	}
 }
+
+// The API stores its idempotent answer in finish. If that fails, there must be
+// no order either: an order whose answer was never stored leaves its key in
+// progress, and the retry that takes the key over would then hear "your cart is
+// empty" about an order that exists.
+func TestFinishRunsInTheOrdersTransaction(t *testing.T) {
+	f := setup(t)
+	s := f.newShop(t)
+	ctx := context.Background()
+
+	t.Run("it sees the new order", func(t *testing.T) {
+		me := f.newShopper(t)
+		f.fullCart(t, s, me)
+		var seen []HistoryEntry
+		o, err := f.orders.PlaceAnd(ctx, me.ProfileID, me.home, func(ctx context.Context, tx pgx.Tx, o Order) error {
+			var err error
+			seen, err = HistoryIn(ctx, tx, o.ID)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) != 1 || seen[0].To != Placed || !seen[0].At.Equal(o.CreatedAt) {
+			t.Fatalf("finish saw history %+v; want the placed entry", seen)
+		}
+	})
+
+	t.Run("its failure undoes the checkout", func(t *testing.T) {
+		me := f.newShopper(t)
+		f.fullCart(t, s, me)
+		boom := errors.New("could not store the answer")
+		_, err := f.orders.PlaceAnd(ctx, me.ProfileID, me.home, func(context.Context, pgx.Tx, Order) error {
+			return boom
+		})
+		if !errors.Is(err, boom) {
+			t.Fatalf("got %v, want finish's own error", err)
+		}
+		if n := f.orderCount(t, me); n != 0 {
+			t.Fatalf("%d orders, want 0", n)
+		}
+		c, err := f.carts.Get(ctx, me.ProfileID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Items) != 2 {
+			t.Fatalf("cart has %d lines, want the 2 still there", len(c.Items))
+		}
+	})
+}

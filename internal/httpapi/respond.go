@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 
@@ -35,6 +37,23 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// jsonBody encodes v exactly as writeJSON would send it, for an answer that
+// has to be stored before it's sent.
+func jsonBody(v any) ([]byte, error) {
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(v); err != nil {
+		return nil, fmt.Errorf("encode response: %w", err)
+	}
+	return b.Bytes(), nil
+}
+
+// writeJSONBody sends an already encoded JSON body.
+func writeJSONBody(w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {

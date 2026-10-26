@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
+	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
 
 // cartLines says how many lines are in the customer's cart: a checkout that
@@ -19,6 +21,19 @@ import (
 func (f orderFixture) cartLines(t *testing.T, token string) int {
 	t.Helper()
 	return len(decode[carts.Cart](t, send(t, f.h, http.MethodGet, "/cart", token, ""), http.StatusOK).Items)
+}
+
+func (f orderFixture) userID(t *testing.T, token string) uuid.UUID {
+	t.Helper()
+	claims, err := f.srv.tokens.Parse(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := claims.UserID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func (f orderFixture) orderCount(t *testing.T, token string) int {
@@ -101,14 +116,7 @@ func TestCheckoutWhileTheFirstAttemptRuns(t *testing.T) {
 	key := uuid.NewString()
 
 	// Play the first attempt: hold the key, as a request still running would.
-	claims, err := f.srv.tokens.Parse(me)
-	if err != nil {
-		t.Fatal(err)
-	}
-	userID, err := claims.UserID()
-	if err != nil {
-		t.Fatal(err)
-	}
+	userID := f.userID(t, me)
 	fp := idempotency.FingerprintOf(http.MethodPost, "/orders", []byte(`{"address_id": "`+home+`"}`))
 	if _, _, err := f.srv.idempotency.Begin(context.Background(), userID, key, fp); err != nil {
 		t.Fatal(err)
@@ -203,5 +211,68 @@ func TestServerErrorsReleaseTheKey(t *testing.T) {
 				t.Fatalf("third attempt: %d %s after %d calls; want the retry's answer, 2 calls", rec.Code, rec.Body, calls)
 			}
 		})
+	}
+}
+
+// A checkout loses its key halfway: it ran so long that a retry took the key
+// over. Its order must vanish with it, or the customer would have an order
+// that no stored answer describes (and the retry's answer says something else).
+//
+// The test makes checkout wait at the cart lock (held by the test), takes the
+// key over meanwhile, and lets go. Storing the answer then fails inside the
+// order's transaction, which undoes the order too.
+func TestCheckoutThatLostItsKeyOrdersNothing(t *testing.T) {
+	f := newOrderFixture(t)
+	me, home := f.customer(t)
+	f.fill(t, me)
+	key := uuid.NewString()
+	pool := testutil.DB(t)
+	ctx := context.Background()
+
+	hold, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback(ctx)
+	if _, err := hold.Exec(ctx, `
+		SELECT c.id FROM carts c JOIN profiles p ON p.id = c.customer_profile_id
+		WHERE p.user_id = $1 FOR UPDATE OF c`, f.userID(t, me)); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan *http.Response, 1)
+	go func() { done <- f.checkoutWithKey(t, me, key, home).Result() }()
+	select {
+	case <-done:
+		t.Fatal("checkout didn't wait at the cart lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	takeOver(t, pool, f.userID(t, me), key)
+	if err := hold.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	res := <-done
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("checkout: %d, want 409 (a newer attempt holds the key)", res.StatusCode)
+	}
+	if n := f.orderCount(t, me); n != 0 {
+		t.Fatalf("%d orders, want 0: the order outlived its lost key", n)
+	}
+	if n := f.cartLines(t, me); n != 2 {
+		t.Fatalf("cart has %d lines, want the 2 still there", n)
+	}
+}
+
+// takeOver plays another attempt taking the key: a new attempt ID, as Begin
+// writes when it takes over an abandoned key.
+func takeOver(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, key string) {
+	t.Helper()
+	tag, err := pool.Exec(context.Background(),
+		`UPDATE idempotency_keys SET attempt = $3 WHERE user_id = $1 AND key = $2 AND status = 'in_progress'`,
+		userID, key, uuid.Must(uuid.NewV7()))
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("take the key over: %v (%d rows)", err, tag.RowsAffected())
 	}
 }

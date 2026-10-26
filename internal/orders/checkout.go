@@ -75,6 +75,13 @@ type BelowMinimumError struct {
 
 func (e *BelowMinimumError) Error() string { return "basket below the restaurant's minimum" }
 
+// Finish is work that must happen together with placing an order: it runs
+// inside the order's transaction, after everything else, and if it fails the
+// order is not placed. The API stores its idempotent answer this way, so an
+// order never exists without the answer that describes it (or the other way
+// round).
+type Finish func(ctx context.Context, tx pgx.Tx, o Order) error
+
 // Place turns the customer's cart into an order sent to one of their addresses.
 //
 // It runs in two halves:
@@ -90,6 +97,13 @@ func (e *BelowMinimumError) Error() string { return "basket below the restaurant
 // cart (the first emptied it) and gets ErrCartEmpty, so one cart can never
 // become two orders.
 func (s *Store) Place(ctx context.Context, customerProfileID, addressID uuid.UUID) (Order, error) {
+	return s.PlaceAnd(ctx, customerProfileID, addressID, nil)
+}
+
+// PlaceAnd is Place, with finish (if not nil) run as the last step of the
+// order's transaction. An error from finish undoes the whole checkout and is
+// returned as it is.
+func (s *Store) PlaceAnd(ctx context.Context, customerProfileID, addressID uuid.UUID, finish Finish) (Order, error) {
 	cart, err := s.carts.Get(ctx, customerProfileID)
 	if err != nil {
 		return Order{}, err
@@ -148,6 +162,9 @@ func (s *Store) Place(ctx context.Context, customerProfileID, addressID uuid.UUI
 		// Its lines go with it (ON DELETE CASCADE).
 		if _, err := tx.Exec(ctx, `DELETE FROM carts WHERE id = $1`, cartID); err != nil {
 			return fmt.Errorf("empty cart: %w", err)
+		}
+		if finish != nil {
+			return finish(ctx, tx, o)
 		}
 		return nil
 	})

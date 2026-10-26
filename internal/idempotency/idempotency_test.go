@@ -292,3 +292,42 @@ func TestDeleteExpiredKeepsFreshKeys(t *testing.T) {
 		t.Fatalf("left %v, want [fresh]", keys)
 	}
 }
+
+func TestSaveTxStoresOnlyWhatCommits(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	user := f.user(t)
+	c := f.mustClaim(t, user, "k1", checkout)
+	answer := Response{Status: 201, Body: []byte(`{"id":"order-1"}`)}
+
+	// The work failed after the answer was written: both roll back.
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveTx(ctx, tx, c, answer); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.store.Begin(ctx, user, "k1", checkout); !errors.Is(err, ErrInProgress) {
+		t.Fatalf("after rollback: got %v, want the key still in progress", err)
+	}
+
+	// This time it commits.
+	tx, err = f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveTx(ctx, tx, c, answer); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, got, err := f.store.Begin(ctx, user, "k1", checkout)
+	if err != nil || got == nil || string(got.Body) != `{"id":"order-1"}` {
+		t.Fatalf("after commit: got %+v, %v; want the answer", got, err)
+	}
+}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -185,7 +186,27 @@ func (s *Store) claim(ctx context.Context, c Claim, fp Fingerprint) (bool, error
 // Save stores the answer of the attempt holding c and marks the key done, so
 // later attempts replay it. ErrClaimLost if c no longer holds the key.
 func (s *Store) Save(ctx context.Context, c Claim, r Response) error {
-	tag, err := s.pool.Exec(ctx, `
+	return save(ctx, s.pool, c, r)
+}
+
+// SaveTx is Save inside tx: the answer is stored only if tx commits, together
+// with the work it describes. Use it when the work is itself a transaction
+// (placing an order), so there is never work without its answer.
+//
+// The row stays locked until tx ends, so a retry arriving meanwhile waits for
+// the outcome instead of taking the key over.
+func SaveTx(ctx context.Context, tx pgx.Tx, c Claim, r Response) error {
+	return save(ctx, tx, c, r)
+}
+
+// execer is what the pool and a transaction have in common, for writes that
+// run in either.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func save(ctx context.Context, db execer, c Claim, r Response) error {
+	tag, err := db.Exec(ctx, `
 		UPDATE idempotency_keys
 		SET status = 'done', response_status = $4, response_body = $5
 		WHERE user_id = $1 AND key = $2 AND attempt = $3 AND status = 'in_progress'`,
