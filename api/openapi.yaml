@@ -39,6 +39,8 @@ tags:
     description: Finding and managing restaurants.
   - name: menus
     description: Reading and managing a restaurant's menu.
+  - name: webhooks
+    description: Called by the payment provider, not by apps.
 
 paths:
   /healthz:
@@ -698,6 +700,81 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/OrderNotFound" }
         "409": { $ref: "#/components/responses/InvalidTransition" }
+
+  /webhooks/payprovider:
+    post:
+      tags: [webhooks]
+      operationId: receivePayProviderWebhook
+      summary: The payment provider tells us about a payment
+      description: |
+        Called by the payment provider (not by apps) when one of our payments is
+        decided or moves: the fast way to learn that a slow card was approved,
+        instead of waiting for the backend to ask. The backend still asks about
+        payments it hasn't heard of in a while, in case a webhook never comes.
+
+        **No login: the signature is the proof.** `QB-Signature` carries
+        `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` made with the
+        shared webhook secret. A wrong or missing signature, or a `t` more than 5
+        minutes from our clock (a replay), is refused with `400` and changes
+        nothing.
+
+        **Safe to send again.** Webhooks arrive at least once and in no
+        particular order. An event `id` seen before is answered `200` with
+        outcome `repeat` and does nothing; an event older than what we know
+        (an `authorized` after a `captured`) changes nothing either (outcome
+        `stale`): a payment's status never goes backwards.
+
+        **Outcomes** (`200`): `applied` (it changed the payment, and maybe paid
+        or cancelled the order), `stale`, `repeat`, `unmatched` (about no payment
+        of ours), `mismatch` (our payment, another amount: not trusted),
+        `ignored` (a genuine event of a type we don't handle).
+      parameters:
+        - name: QB-Signature
+          in: header
+          required: true
+          description: The webhook's signature, see above.
+          schema: { type: string, example: "t=1792927973,v1=5fcc867543df15ab2d73a277a81f74cfee9688f3b0312ba724e693e4bad98cc6" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookEvent" }
+      responses:
+        "200":
+          description: Handled, or handled before. The provider stops sending it.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [outcome]
+                additionalProperties: false
+                properties:
+                  outcome:
+                    type: string
+                    enum: [applied, stale, repeat, unmatched, mismatch, ignored]
+        "400":
+          description: "`invalid_webhook`: the signature is missing, wrong or too old, or the body isn't a webhook. Nothing was changed."
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: "`body_too_large`: the body is over 64 KiB."
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: "`internal`: something failed on our side. Nothing was changed and the event wasn't marked as seen, so the provider's next try is handled."
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /restaurants:
     get:
@@ -1633,6 +1710,31 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    WebhookEvent:
+      description: |
+        A webhook from the payment provider: what happened to which payment.
+        `data.payment` is the payment as this event left it, so its `status`
+        matches `type` even if the payment has moved on since.
+      type: object
+      required: [id, type, created_at, data]
+      properties:
+        id: { type: string, description: "The provider's event ID, the same on every try.", example: 02c4baf7-d82f-4da5-9f30-6a38c707d649 }
+        type: { type: string, example: payment.authorized }
+        created_at: { type: string, format: date-time }
+        data:
+          type: object
+          required: [payment]
+          properties:
+            payment:
+              type: object
+              required: [id, amount_kurus, status]
+              properties:
+                id: { type: string, description: "The provider's payment ID." }
+                amount_kurus: { type: integer, example: 47990 }
+                status: { type: string, example: authorized }
+                decline_code: { type: string, example: card_declined }
+                reference: { type: string, description: Our order ID. }
+
     Error:
       type: object
       required: [error]
@@ -2118,10 +2220,11 @@ components:
           nullable: true
         via:
           type: string
-          enum: [request, reconcile]
+          enum: [request, reconcile, webhook]
           description: |
-            How the backend learned it: `request` (the answer to its own call)
-            or `reconcile` (it asked the provider again later).
+            How the backend learned it: `request` (the answer to its own call),
+            `reconcile` (it asked the provider again later) or `webhook` (the
+            provider told it).
         at: { type: string, format: date-time }
 
     StatusChange:

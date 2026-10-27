@@ -115,8 +115,14 @@ func (s *Sender) SendDue(ctx context.Context) (int, error) {
 	return s.sendDue(ctx, nil)
 }
 
-// sendDue is SendDue limited to some endpoints' deliveries (tests use it, so
-// they never send other tests' webhooks); nil means any.
+// SendDueTo is SendDue limited to these endpoints' deliveries. Tests use it
+// (here and in the API's tests, which run this sender against a real API), so
+// they never send other tests' webhooks in the shared test database.
+func (s *Sender) SendDueTo(ctx context.Context, endpoints ...uuid.UUID) (int, error) {
+	return s.sendDue(ctx, endpoints)
+}
+
+// sendDue is SendDue limited to some endpoints' deliveries; nil means any.
 func (s *Sender) sendDue(ctx context.Context, only []uuid.UUID) (int, error) {
 	batch, err := s.claim(ctx, only)
 	if err != nil {

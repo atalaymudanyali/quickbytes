@@ -46,6 +46,8 @@ type Deps struct {
 	// MenuCache serves public menus. It works without Redis too (it then reads
 	// from the database), but must not be nil.
 	MenuCache *menus.Cache
+	// WebhookSecret checks the payment provider's webhook signatures.
+	WebhookSecret string
 	// Limiter slows down repeated login and sign-up attempts. nil: no limits.
 	Limiter *ratelimit.Limiter
 	Logger  *slog.Logger
@@ -64,10 +66,12 @@ type Server struct {
 	orders      *orders.Store
 	payments    *payments.Store
 	idempotency *idempotency.Store
-	menuCache   *menus.Cache
-	limiter     *ratelimit.Limiter
-	limits      limits
-	logger      *slog.Logger
+	// webhookSecret checks the payment provider's webhook signatures.
+	webhookSecret string
+	menuCache     *menus.Cache
+	limiter       *ratelimit.Limiter
+	limits        limits
+	logger        *slog.Logger
 
 	dummyOnce sync.Once
 	dummy     string // see dummyHash
@@ -78,22 +82,23 @@ func NewServer(d Deps) *Server {
 		d.Limiter = ratelimit.New(nil, d.Logger)
 	}
 	return &Server{
-		db:          d.DB,
-		users:       d.Users,
-		hasher:      d.Hasher,
-		tokens:      d.Tokens,
-		refresh:     d.Refresh,
-		restaurants: d.Restaurants,
-		menus:       d.Menus,
-		addresses:   d.Addresses,
-		carts:       d.Carts,
-		orders:      d.Orders,
-		payments:    d.Payments,
-		idempotency: d.Idempotency,
-		menuCache:   d.MenuCache,
-		limiter:     d.Limiter,
-		limits:      defaultLimits,
-		logger:      d.Logger,
+		db:            d.DB,
+		users:         d.Users,
+		hasher:        d.Hasher,
+		tokens:        d.Tokens,
+		refresh:       d.Refresh,
+		restaurants:   d.Restaurants,
+		menus:         d.Menus,
+		addresses:     d.Addresses,
+		carts:         d.Carts,
+		orders:        d.Orders,
+		payments:      d.Payments,
+		idempotency:   d.Idempotency,
+		webhookSecret: d.WebhookSecret,
+		menuCache:     d.MenuCache,
+		limiter:       d.Limiter,
+		limits:        defaultLimits,
+		logger:        d.Logger,
 	}
 }
 
@@ -155,6 +160,10 @@ func (s *Server) routes() []route {
 		{"POST /orders/{order_id}/accept", ownerOnly(s.handleAcceptOrder)},
 		{"POST /orders/{order_id}/reject", ownerOnly(s.handleRejectOrder)},
 		{"POST /orders/{order_id}/ready", ownerOnly(s.handleOrderReady)},
+
+		// The payment provider telling us about payments. No login: the
+		// webhook's signature proves who sent it.
+		{"POST /webhooks/payprovider", public(s.handlePayProviderWebhook)},
 
 		// Restaurants: browsing is public, managing is for owners.
 		{"GET /restaurants", public(s.handleNearbyRestaurants)},
