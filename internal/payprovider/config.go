@@ -3,6 +3,7 @@ package payprovider
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -20,6 +21,12 @@ type Config struct {
 	// WebhookSecret signs them (the merchant checks with the same one).
 	WebhookURL    string
 	WebhookSecret string
+	// WebhookSendEvery is how often queued webhooks are checked for being
+	// due; WebhookTimeout how long one try waits for the endpoint.
+	// WebhookSendTwice posts every webhook twice (a test switch).
+	WebhookSendEvery time.Duration
+	WebhookTimeout   time.Duration
+	WebhookSendTwice bool
 	// SlowCardDelay is how long a payment with the slow test card stays
 	// processing before it's authorized.
 	SlowCardDelay time.Duration
@@ -51,6 +58,17 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.SettleEvery, err = getDuration("SETTLE_EVERY", time.Second); err != nil {
 		return Config{}, err
+	}
+	if cfg.WebhookSendEvery, err = getDuration("WEBHOOK_SEND_EVERY", time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.WebhookTimeout, err = getDuration("WEBHOOK_TIMEOUT", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if v := os.Getenv("WEBHOOK_SEND_TWICE"); v != "" {
+		if cfg.WebhookSendTwice, err = strconv.ParseBool(v); err != nil {
+			return Config{}, fmt.Errorf("WEBHOOK_SEND_TWICE must be true or false, got %q", v)
+		}
 	}
 	if cfg.IdempotencyCleanupEvery, err = getDuration("IDEMPOTENCY_CLEANUP_EVERY", 10*time.Minute); err != nil {
 		return Config{}, err

@@ -91,6 +91,9 @@ services:
       # one. An empty WEBHOOK_URL turns webhooks off: WEBHOOK_URL= make up
       WEBHOOK_URL: ${WEBHOOK_URL-http://api:8080/webhooks/payprovider}
       WEBHOOK_SECRET: whsec_dev_only_quickbytes_0123456789abcdef
+      # Test switch: post every webhook twice, to show the API handles the
+      # repeat only once. Turn it on like: WEBHOOK_SEND_TWICE=true make up
+      WEBHOOK_SEND_TWICE: ${WEBHOOK_SEND_TWICE-false}
     ports:
       - "127.0.0.1:8090:8090"
     depends_on:

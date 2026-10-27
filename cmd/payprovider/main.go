@@ -76,9 +76,17 @@ func run(logger *slog.Logger) error {
 		// No WriteTimeout: the hang card's answer takes 30 seconds on purpose.
 	}
 
-	// Slow-card payments get their final answer when their time comes. Both
-	// loops stop with ctx, on shutdown.
+	// Slow-card payments get their final answer when their time comes. All
+	// the loops stop with ctx, on shutdown.
 	go payments.RunSettler(ctx, cfg.SettleEvery, logger)
+	// Queued webhooks are posted, and tried again later when they fail.
+	sender := payprovider.NewSender(pool, payprovider.SenderConfig{
+		Timeout: cfg.WebhookTimeout, SendTwice: cfg.WebhookSendTwice,
+	}, logger)
+	go sender.RunSender(ctx, cfg.WebhookSendEvery)
+	if cfg.WebhookSendTwice {
+		logger.Warn("WEBHOOK_SEND_TWICE is on: every webhook is posted twice")
+	}
 	// Idempotency keys older than 24 hours are deleted, as in the API.
 	go idempotency.NewStore(pool).RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 
