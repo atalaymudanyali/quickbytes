@@ -45,6 +45,7 @@ type Via string
 const (
 	ViaRequest   Via = "request"   // the answer to our own call
 	ViaReconcile Via = "reconcile" // the reconcile loop asked the provider later
+	ViaWebhook   Via = "webhook"   // the provider told us (a webhook)
 )
 
 var ErrNotFound = errors.New("payment not found")
@@ -127,6 +128,10 @@ type Change struct {
 // it is now. A ledger line is added only when the status really changes: the
 // loop asking twice and hearing "authorized" twice is one event, not two.
 //
+// A change the ratchet doesn't allow (see allowed) writes nothing: the
+// payment comes back as it was. Callers compare its status with the one they
+// brought to tell.
+//
 // The payment row is locked (FOR UPDATE) first, so two writers that learned
 // something at the same moment (a request and the loop) take turns.
 func updateIn(ctx context.Context, tx pgx.Tx, id uuid.UUID, c Change, via Via) (Payment, error) {
@@ -137,6 +142,9 @@ func updateIn(ctx context.Context, tx pgx.Tx, id uuid.UUID, c Change, via Via) (
 	}
 	if err != nil {
 		return Payment{}, fmt.Errorf("lock payment: %w", err)
+	}
+	if !allowed(before.Status, c.Status) {
+		return before, nil // old news, or news that contradicts what we know
 	}
 	if c.ProviderPaymentID == nil {
 		c.ProviderPaymentID = before.ProviderPaymentID // what we knew stays known

@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/atalaymudanyali/quickbytes/internal/webhook"
 )
 
 // DefaultTimeout is how long a call to the provider may take before we stop
@@ -234,4 +236,60 @@ func refusalOrNoAnswer(status int, raw []byte) error {
 func IsRefused(err error) bool {
 	var r *RefusedError
 	return errors.As(err, &r)
+}
+
+// ErrBadWebhook: a webhook that isn't one: no valid signature (see
+// internal/webhook), or a body we can't read. Nothing is changed; the sender
+// gets a 400.
+var ErrBadWebhook = errors.New("bad webhook")
+
+// ErrUnsupportedWebhook: a genuine webhook (the signature checks out) about
+// something we don't handle, such as an event type the provider added after
+// this code was written. It's answered 2xx and ignored: an error would only
+// make the provider try again, for hours, with the same webhook.
+var ErrUnsupportedWebhook = errors.New("unsupported webhook")
+
+// wireEvent is a webhook body as our mock provider sends it.
+type wireEvent struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Data struct {
+		Payment *struct {
+			wirePayment
+			Reference *string `json:"reference"`
+		} `json:"payment"`
+	} `json:"data"`
+}
+
+// ParsePayProviderWebhook checks a webhook from our mock provider and
+// translates it into our words: the signature first (with secret, against the
+// raw body as received; see webhook.Verify), and only then the JSON. Like the
+// rest of the plug, it's the one place that knows the provider's format.
+func ParsePayProviderWebhook(secret, signature string, body []byte, now time.Time) (WebhookEvent, error) {
+	if err := webhook.Verify(secret, signature, body, now); err != nil {
+		return WebhookEvent{}, fmt.Errorf("%w: %w", ErrBadWebhook, err)
+	}
+	var w wireEvent
+	if err := json.Unmarshal(body, &w); err != nil {
+		return WebhookEvent{}, fmt.Errorf("%w: unreadable body: %v", ErrBadWebhook, err)
+	}
+	if w.ID == "" {
+		return WebhookEvent{}, fmt.Errorf("%w: no event id", ErrBadWebhook)
+	}
+	status, ok := strings.CutPrefix(w.Type, "payment.")
+	if _, known := providerStatuses[status]; !ok || !known || status == "processing" {
+		return WebhookEvent{ID: w.ID, Type: w.Type}, fmt.Errorf("%w: event type %q", ErrUnsupportedWebhook, w.Type)
+	}
+	if w.Data.Payment == nil || w.Data.Payment.Status != status {
+		return WebhookEvent{}, fmt.Errorf("%w: %s without a matching payment", ErrBadWebhook, w.Type)
+	}
+	pp, err := w.Data.Payment.ours()
+	if err != nil {
+		return WebhookEvent{}, fmt.Errorf("%w: %v", ErrBadWebhook, err)
+	}
+	ev := WebhookEvent{ID: w.ID, Type: w.Type, Payment: pp}
+	if w.Data.Payment.Reference != nil {
+		ev.Reference = *w.Data.Payment.Reference
+	}
+	return ev, nil
 }
