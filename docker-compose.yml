@@ -59,6 +59,10 @@ services:
       PAYPROVIDER_WEBHOOK_SECRET: whsec_dev_only_quickbytes_0123456789abcdef
       # How often the reconcile loop settles payments that need work.
       PAYMENT_RECONCILE_EVERY: ${PAYMENT_RECONCILE_EVERY-5s}
+      # Publish order events from the outbox to Redpanda. Turn the relay off to
+      # watch events pile up in the outbox: OUTBOX_RELAY=false make up
+      OUTBOX_RELAY: ${OUTBOX_RELAY-true}
+      KAFKA_BROKERS: redpanda:9092
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -71,6 +75,10 @@ services:
       # Started first, but not required to be healthy: the API works without
       # its cache (it reads from the database instead).
       redis:
+        condition: service_started
+      # Started first, but not waited for either: while Redpanda is down,
+      # order events wait in the outbox and go out once it's back.
+      redpanda:
         condition: service_started
 
   # The mock payment provider: a fake card processor playing an outside company

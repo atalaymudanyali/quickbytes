@@ -31,7 +31,7 @@ topics: ## Start Redpanda and create its topics if they're missing
 
 events: topics ## Watch order events live, from the first one (Ctrl+C to stop)
 	docker compose exec redpanda rpk topic consume orders --offset start \
-		--format 'partition %p  offset %o  key %k\n%v\n\n'
+		--format 'partition %p  offset %o  key %k  %h{%k=%v }\n%v\n\n'
 
 console: topics ## Open Redpanda Console (browse topics and messages) at http://localhost:8088
 	docker compose --profile console up -d console
