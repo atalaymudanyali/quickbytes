@@ -608,6 +608,10 @@ considered, and what it costs.
 - [0008](docs/adr/0008-payments-find-out-never-charge-again.md) Payments: a timeout is "unknown", found out later, never charged again
 - [0009](docs/adr/0009-payment-webhooks.md) Payment webhooks: signed, sent at least once, applied by a ratchet
 - [0010](docs/adr/0010-transactional-outbox.md) Order events: a transactional outbox, relayed to Redpanda
+- [0011](docs/adr/0011-payment-provider-own-service.md) The payment provider is its own service, with its own database
+- [0012](docs/adr/0012-cart-in-postgres-priced-live.md) The cart lives in PostgreSQL and stores no prices
+- [0013](docs/adr/0013-orders-copy-and-one-state-machine.md) Orders copy what was bought, and move only through one state machine
+- [0014](docs/adr/0014-idempotency-keys-in-postgres.md) Idempotency keys in PostgreSQL, saved in the order's own transaction
 
 ## Roadmap
 

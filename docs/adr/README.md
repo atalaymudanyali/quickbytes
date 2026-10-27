@@ -22,3 +22,7 @@ record replaces the old one, and the old one is marked *Superseded*.
 | [0008](0008-payments-find-out-never-charge-again.md) | Payments: a timeout is "unknown", found out later, never charged again | Accepted |
 | [0009](0009-payment-webhooks.md) | Payment webhooks: signed, sent at least once, applied by a ratchet | Accepted |
 | [0010](0010-transactional-outbox.md) | Order events: a transactional outbox, relayed to Redpanda | Accepted |
+| [0011](0011-payment-provider-own-service.md) | The payment provider is its own service, with its own database | Accepted |
+| [0012](0012-cart-in-postgres-priced-live.md) | The cart lives in PostgreSQL and stores no prices | Accepted |
+| [0013](0013-orders-copy-and-one-state-machine.md) | Orders copy what was bought, and move only through one state machine | Accepted |
+| [0014](0014-idempotency-keys-in-postgres.md) | Idempotency keys in PostgreSQL, saved in the order's own transaction | Accepted |
