@@ -10,32 +10,39 @@ Istanbul streets.
 One iPhone app holds all three roles (customer, restaurant, driver), switched from a
 side menu.
 
-> **Status:** phase 1 of 7 (foundation) is done: accounts, restaurants, menus,
-> caching, rate limits, API docs and Istanbul demo data. Phase 2 (orders and payments)
-> has started: dishes have options (sizes, extras), customers have saved delivery
-> addresses and a server-side cart priced live from the menu, and checkout turns the
-> cart into an order that moves through a state machine. Checkout is safe to retry
-> (idempotency keys). A mock payment provider runs as its own service, with test
-> cards for every outcome; the API authorizes at checkout, captures when the
-> restaurant accepts, and hears back by signed webhooks. Every order move is
-> published as an event to Redpanda through a transactional outbox. Next: the
-> phase 2 wrap-up. See the [roadmap](#roadmap).
+> **Status:** phases 1 (foundation) and 2 (orders and payments) of 7 are done.
+> Customers fill a cart and check out with a test card. The order moves through a
+> state machine, and the money follows it at a mock payment provider: held at
+> checkout, taken when the restaurant accepts, released or refunded on a cancel.
+> Retrying a checkout never charges twice: 84 checkouts, each sent 10 times at once,
+> gave **0 double charges** ([measured](#checkout-retried-hard-never-charged-twice)).
+> Every order move is published to Redpanda for the next phase. Next: phase 3,
+> drivers and dispatch. See the [roadmap](#roadmap).
 
 ## Quick start
 
 Needs Docker and Go 1.27+.
 
 ```bash
-make up        # start PostgreSQL, Redis, Redpanda, the API and the mock payment provider in Docker
-make seed      # fill it with Istanbul demo data
+make up        # PostgreSQL, Redis, Redpanda, the API (:8080) and the mock payment provider (:8090), in Docker
+make seed      # Istanbul demo data, and six orders in different statuses
 ```
 
 Then open **http://localhost:8080/docs**, log in with
 `demo@demo.quickbytes.test` / `quickbytes-demo` through `POST /auth/login`, paste the
-`access_token` into **Authorize**, and try any endpoint. `make test` runs every test,
-and `make down` stops everything.
+`access_token` into **Authorize**, and try any endpoint. Or follow
+[an order from cart to kitchen](#an-order-from-cart-to-kitchen) with curl.
 
-## What's built (phase 1)
+```bash
+make events          # watch order events arrive on Redpanda, live
+make test            # every test, against real PostgreSQL and Redis
+make load-checkout   # retry checkouts hard, then count double charges at the provider
+make down            # stop everything (the data is kept)
+```
+
+## What's built
+
+### Phase 1: foundation
 
 - **Accounts and login:** sign-up, argon2id password hashing, 15-minute access tokens
   and single-use refresh tokens (reusing one revokes the whole login). One account
@@ -55,114 +62,50 @@ and `make down` stops everything.
 - **CI:** formatting, `go vet` and the full test suite (against real PostgreSQL and
   Redis) on every pull request.
 
-Phase 2 so far:
+### Phase 2: orders and payments
 
 - **Dish options:** option groups with priced choices ("Boy: pick exactly 1",
-  "Ekstralar: up to 3"), each owner-set `min_picks` / `max_picks`, shown in the
-  cached menu. One shared validator checks a customer's picks; the cart and
-  checkout will reuse it.
-- **Delivery addresses:** customers save up to 10 (label, street address, details
-  such as floor and door, and a map pin). The limit holds even under simultaneous
-  requests: each save locks the customer's profile row first.
-- **Server-side cart:** one per customer in PostgreSQL, for one restaurant at a
-  time (a dish from another gets `409 cart_restaurant_mismatch`). The cart stores no
-  prices: every read works out the subtotal, the restaurant's delivery fee and the
-  total from the live (cached) menu, so a price change shows up at once. Dishes
-  that can no longer be ordered as they are stay in the cart, flagged, without a
-  price. The database itself keeps every line in the cart's restaurant: both of a
-  line's foreign keys share its `restaurant_id`.
-- **Checkout and orders:** `POST /orders` turns the cart into an order. It refuses
-  an empty cart, flagged lines, a paused restaurant and a basket below the minimum,
-  then in one transaction locks the cart, checks it still holds what was priced,
-  **copies** every name, option and price and the delivery address into the order,
-  and empties the cart. Later menu or address changes never alter a past order, and
-  a double-tapped "Place order" gives one order, not two.
-- **Retry-safe checkout (idempotency keys):** `POST /orders` needs an
-  `Idempotency-Key` header, one random value per tap on "Place order". A retry with
-  the same key (the phone lost signal before the answer came) gets the first
-  attempt's stored answer again, byte for byte, marked `Idempotent-Replayed: true`,
-  instead of ordering again. While the first attempt still runs, retries get
-  `409 idempotency_in_progress`; the same key with a different body is
-  `422 idempotency_key_reused`. Keys live in PostgreSQL per user, with a SHA-256
-  fingerprint of the request, for 24 hours. The answer is stored **in the order's
-  own transaction**, so an order never exists without its answer (a first answer
-  before the card is asked, replaced by the final one after). Ten simultaneous
-  retries make exactly one order and one card authorization.
-- **Order state machine:** `placed → paid → accepted → ready → picked_up →
-  delivered`, or `cancelled` with a reason (`payment_failed`, `rejected`,
-  `by_customer`, `expired`). One function holds every allowed move and who may make
-  it; it locks the order row (`SELECT … FOR UPDATE`), so two moves at once can't
-  both win, and writes a status history row for each. Every other move gets
-  `409 invalid_transition`. Customers cancel before the restaurant accepts;
-  restaurants see paid orders in a kitchen queue and accept, reject or mark them
-  ready; other people's orders are `404`.
-- **Expiry:** a background loop cancels orders still unpaid after 15 minutes. It
-  takes them with `FOR UPDATE SKIP LOCKED`, so several API copies share the work and
-  an order being paid at that moment is skipped, not waited for.
-- **Mock payment provider:** a fake card processor, run as **its own service with
-  its own database** (`payprovider`, in the same PostgreSQL container, sharing no
-  tables), so the API will reach it only over HTTP, like Stripe or iyzico, where
-  calls can be slow, fail or arrive twice. Merchants log in with an API key (only
-  its SHA-256 is stored). It **authorizes** (holds an amount on a card), then
-  **captures** (takes it), **voids** (drops the hold) or **refunds**; any other
-  move is `409 invalid_state`, and two captures at once can't both win (the status
-  check and the change are one `UPDATE`). Every write needs an `Idempotency-Key`,
-  reusing the API's idempotency package, and the answer is stored in the payment's
-  own transaction, so a retry never holds, takes or gives back money twice. Every
-  status change is appended to an append-only history (a trigger refuses edits),
-  which its webhooks are sent from. Test cards cover approval, decline,
-  insufficient funds, a slow card (`processing`, finished later by a background
-  loop) and a card that hangs for 30 seconds. Its own OpenAPI file,
-  [`api/payprovider.yaml`](api/payprovider.yaml), is checked against every answer
-  in its tests.
-- **Payments in the API:** checkout **authorizes** the card (holds the money), the
-  restaurant accepting **captures** it, a reject or cancel before that **voids**
-  the hold, and a cancel after it is **refunded**. A decline cancels the order
-  (`payment_failed`). The API reaches the provider only through a small Go
-  interface (`payments.Provider`), with one HTTP client plugged into it, and the
-  card number is never stored (only its last 4 digits). Every call carries an
-  `Idempotency-Key` made from the payment and the step (`<payment>:capture`), so a
-  retry reuses the same key and the provider moves the money once. A provider that
-  doesn't answer within 5 seconds means **`unknown`, not failed**. A background
-  reconcile loop then finds the payment at the provider by the order ID, and never
-  authorizes again. If nothing turns up after a minute, the payment fails
-  (`no_answer`). The same loop polls slow (`processing`) cards, and retries
-  captures, voids and refunds that got no answer, waiting longer each time
-  (exponential backoff with jitter). It decides what to do the thermostat way:
-  look at the order and the payment, and take the one step that brings them in
-  line. Every payment change is appended to `payment_events` (append-only, by
-  trigger) with where it came from (`request`, `reconcile` or `webhook`). Several
-  API copies can run the loop at once: each takes due payments with
-  `FOR UPDATE SKIP LOCKED` and a one-minute lease. The customer sees the payment
-  and its history on the order; the restaurant doesn't.
-- **Payment webhooks:** instead of only asking, the API is **told**: the provider
-  posts `payment.authorized`, `.failed`, `.captured`, `.voided` and `.refunded` to
-  `POST /webhooks/payprovider`. Anyone could call that URL, so every webhook is
-  **signed** like Stripe's (`QB-Signature: t=…,v1=…`, HMAC-SHA256 of the time and
-  the raw body with a shared secret, compared in constant time, refused when more
-  than 5 minutes old so it can't be replayed). The provider queues each webhook in
-  the **same statement** as the payment change, and keeps trying while the API
-  doesn't answer 2xx: 1 s, 2 s, 4 s… up to an hour, with random jitter, for about
-  2 hours. So a webhook can arrive **twice** (the API remembers event IDs in a
-  `webhook_events` table, written in the same transaction as the change it makes)
-  and **out of order** (a payment's status only ever moves forward, so older news
-  changes nothing). Webhooks go through the same code as the reconcile loop, which
-  stays as the safety net and now waits 30 s before polling a slow card. A test
-  switch (`WEBHOOK_SEND_TWICE`) sends every webhook twice.
-- **Order events (transactional outbox):** every order move (placed, paid,
-  accepted, ready, cancelled) is published to **Redpanda** (Kafka's protocol),
-  topic `orders`, for dispatch to react to in phase 3. Saving the move in
-  PostgreSQL and publishing to Redpanda can't be one all-or-nothing step, so the
-  event is written into an `outbox` table **in the move's own transaction**: it
-  exists if and only if the move committed. A relay in the API then publishes the
-  waiting rows and stamps them, one transaction per round. Several relays can run
-  (`FOR UPDATE SKIP LOCKED`), the message key is the order ID (one order's events
-  stay on one partition, in order), and a relay only takes an order's oldest
-  waiting event, so a second relay can't overtake the first. Delivery is at least
-  once: each event carries an ID for consumers to drop repeats. While Redpanda is
-  down, orders keep working, events pile up, and the relay backs off (1 s up to
-  30 s) and sends them all once it's back. Published rows are deleted after
-  7 days.
+  "Ekstralar: up to 3"), checked by one shared validator in the cart and at
+  checkout.
+- **Delivery addresses:** up to 10 per customer, with a map pin. The limit holds
+  even under simultaneous requests (the customer's row is locked first).
+- **Server-side cart** in PostgreSQL, one restaurant at a time. It stores **no
+  prices**: every read prices it live from the cached menu, so a price change
+  shows at once, and a dish that can no longer be ordered stays, flagged.
+  [ADR 0012](docs/adr/0012-cart-in-postgres-priced-live.md)
+- **Checkout and the order state machine:** `POST /orders` **copies** every name,
+  option, price and the address into the order, in one transaction with emptying
+  the cart. Then `placed → paid → accepted → ready → picked_up → delivered`, or
+  `cancelled` with a reason. Clients press buttons (`/accept`, `/cancel`); one
+  function makes every move, under a row lock, so two moves at once can't both
+  win. Unpaid orders expire after 15 minutes.
+  [ADR 0013](docs/adr/0013-orders-copy-and-one-state-machine.md)
+- **Retry-safe checkout:** an `Idempotency-Key` per tap on "Place order". A retry
+  gets the first answer again (`Idempotent-Replayed: true`), never a second
+  order. The answer is saved in the order's own transaction.
+  [ADR 0014](docs/adr/0014-idempotency-keys-in-postgres.md)
+- **A mock payment provider** as its own service with its own database, reached
+  only over HTTP, so slow, failed and lost calls are real. Authorize, capture,
+  void, refund; test cards for every outcome, including a card that hangs.
+  [ADR 0011](docs/adr/0011-payment-provider-own-service.md)
+- **Payments that follow the order:** checkout **authorizes** (holds the money),
+  the restaurant accepting **captures** it, a cancel or reject before that
+  **voids** the hold, and a reject after it **refunds**. A provider that doesn't answer in 5 s means
+  **`unknown`, not failed**: a background loop finds the payment by the order ID
+  and never authorizes again. Every change goes into an append-only ledger.
+  [ADR 0008](docs/adr/0008-payments-find-out-never-charge-again.md)
+- **Signed webhooks:** the provider tells the API when a payment changes, signed
+  with HMAC-SHA256 like Stripe's, retried with backoff while the API is down. The
+  API drops repeats by event ID, and a payment's status only moves forward, so
+  late news changes nothing.
+  [ADR 0009](docs/adr/0009-payment-webhooks.md)
+- **Order events through a transactional outbox:** every move writes its event
+  into an `outbox` table in the same transaction, and a relay publishes it to
+  Redpanda (topic `orders`, keyed by the order ID, so one order's events stay in
+  order). Redpanda down? Orders keep working and the events wait.
+  [ADR 0010](docs/adr/0010-transactional-outbox.md)
+- **Measured, not claimed:** a k6 test of retried checkouts, and "broken on
+  purpose" checks for every safety net ([below](#measured)).
 
 ## Measured
 
@@ -389,61 +332,98 @@ options include Nişantaşı Bistro's Burger (doneness, extras, a menu deal) and
 Fenerbahçe Dondurma's Maraş Dondurması (scoops, cone or cup, toppings); Hasan Usta
 Kadıköy's Kıymalı Pide has a switched-off extra.
 
-To fill a cart, log in as `musteri@`, find a dish's `id` and its choice IDs in a
-menu, and `POST /cart/items` with `{"menu_item_id": "...", "quantity": 2,
-"choice_ids": ["..."]}`. Every cart call answers with the whole cart, priced now.
-Then try adding a dish from a second restaurant (409), or log in as `hasan@` in
-another tab, change the price of a dish in the cart, and `GET /cart` again.
+### An order from cart to kitchen
 
-To check out, find the customer's address IDs with `GET /me/addresses` and
-`POST /orders` with `{"address_id": "...", "card_number": "4242424242424242"}` and
-an `Idempotency-Key` header (any new UUID, e.g. from `uuidgen`). The card is one of
-the payment provider's test cards (below). The answer is the order with its
-history and its payment, and the cart is now empty. What the card does:
+After `make up && make seed`, paste this into a terminal (it needs `jq`). It logs
+in as the customer `musteri@` and the owner `hasan@`, and follows one order:
 
-| Card | Order | Payment (ledger) |
+```bash
+API=localhost:8080
+login() {
+  curl -s $API/auth/login -H 'Content-Type: application/json' \
+    -d "{\"email\": \"$1@demo.quickbytes.test\", \"password\": \"quickbytes-demo\"}" | jq -r .tokens.access_token
+}
+C=$(login musteri)   # the customer
+H=$(login hasan)     # the restaurant owner
+R=$(curl -s $API/me/restaurants -H "Authorization: Bearer $H" |
+  jq -r '.restaurants[] | select(.name == "Hasan Usta Kebap Kadıköy") | .id')
+DISH=$(curl -s $API/restaurants/$R/menu |
+  jq -r '[.categories[].items[] | select(.available and all(.option_groups[]; .min_picks == 0))][0].id')
+ADDR=$(curl -s $API/me/addresses -H "Authorization: Bearer $C" | jq -r '.addresses[0].id')
+
+# 1. Fill the cart. It's priced live from the menu (Hasan's minimum basket is 300 TL).
+curl -s -X DELETE $API/cart -H "Authorization: Bearer $C"
+curl -s $API/cart/items -H "Authorization: Bearer $C" -H 'Content-Type: application/json' \
+  -d "{\"menu_item_id\": \"$DISH\", \"quantity\": 3, \"choice_ids\": []}" |
+  jq '{subtotal_kurus, delivery_fee_kurus, total_kurus, below_minimum}'
+
+# 2. Check out with the approve card: one Idempotency-Key per tap on "Place order".
+CARD=4242424242424242
+KEY=$(uuidgen)
+checkout() {
+  curl -s "$@" $API/orders -H "Authorization: Bearer $C" -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: $KEY" -d "{\"address_id\": \"$ADDR\", \"card_number\": \"$CARD\"}"
+}
+O=$(checkout | jq -r .id)
+curl -s $API/orders/$O -H "Authorization: Bearer $C" | jq '{status, payment: .payment.status}'
+# → "paid", "authorized": the money is held, not taken yet
+
+# 3. The answer got lost? Send the same request again, with the same key: the same
+#    order comes back, not a second one.
+checkout -i | grep -i replayed
+# → Idempotent-Replayed: true
+
+# 4. The restaurant accepts: the money held at checkout is now taken.
+curl -s -X POST $API/orders/$O/accept -H "Authorization: Bearer $H" | jq .status
+curl -s $API/orders/$O -H "Authorization: Bearer $C" | jq '{status, ledger: [.payment.events[].status]}'
+# → "accepted", ledger ["pending", "authorized", "captured"]
+
+# 5. Hasan's kitchen queue: paid, accepted and ready orders, oldest first.
+curl -s $API/me/restaurants/$R/orders -H "Authorization: Bearer $H" | jq '[.orders[].status]'
+```
+
+Then repeat steps 1 and 2 with another card (`CARD=4000000000007777`, a new
+`KEY=$(uuidgen)`), and keep reading the order to watch it change.
+
+### Test cards
+
+Only these numbers are accepted. Each one makes a different thing happen at the
+provider, and so to the order:
+
+| Card | At the provider | The order |
 |---|---|---|
-| `4242424242424242` | `paid` | `pending` → `authorized` |
-| `4000000000000002` | `cancelled` (`payment_failed`) | `pending` → `failed` (`card_declined`) |
-| `4000000000007777` | `placed`, then `paid` about 11 seconds later | `pending` → `processing` → `authorized` (via `webhook`) |
-| `4000000000003333` | `paid`, after a 5-second wait | `pending` → `authorized` (via `webhook`, while our call was still waiting) |
+| `4242424242424242` | Approved: `authorized` | `paid` at once |
+| `4000000000000002` | Declined: `402`, `card_declined` | `cancelled` (`payment_failed`) |
+| `4000000000009995` | Not enough money: `402`, `insufficient_funds` | `cancelled` (`payment_failed`) |
+| `4000000000007777` | Slow: `processing`, then `authorized` ~10 s later, announced by a webhook | `placed`, then `paid` ~11 s after checkout |
+| `4000000000003333` | Hang: the money is held at once, but the answer comes after 30 s | `paid` after a 5 s wait: the webhook arrives while our call still waits |
 
-Keep reading the order (`GET /orders/{order_id}`) to watch the slow card settle:
-the provider's webhook tells the API. With webhooks off (`WEBHOOK_URL= make up`),
-the API's reconcile loop finds out instead: the slow card after about 30 seconds,
-and the hang card goes `unknown` first, then `authorized` (via `reconcile`), found
-by the order ID instead of charging again.
+With webhooks off (`WEBHOOK_URL= make up`), the API's reconcile loop finds out
+instead: the slow card after about 30 seconds, and the hang card goes `unknown`
+first, then `authorized` (via `reconcile`), found by the order ID instead of
+charging again.
 
-Then:
+More to try:
 
-- Send the exact same request again, same key: you get the same order back with
-  `Idempotent-Replayed: true`, and `GET /orders` still shows one order. The same
-  key with another `address_id` gets `422 idempotency_key_reused`.
-
+- The same key with another `address_id` gets `422 idempotency_key_reused`.
 - Change that dish's price as `hasan@`, and `GET /orders/{order_id}`: the order
-  keeps the price it was placed at.
-- `POST /orders/{order_id}/cancel` cancels it (`by_customer`); a second cancel gets
-  `409 invalid_transition`.
-- As `hasan@`, `GET /me/restaurants/{id}/orders` is the kitchen queue: the paid
-  orders (approved card) show up there.
-- Watch an unpaid order expire: restart the API with a short window,
-  `ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`, place an order and keep
-  reading it. After about a minute it's `cancelled` (`expired`, by `system`).
-  `make up` on its own goes back to 15 minutes.
+  keeps the price it was placed at. `GET /cart` with the dish in it shows the new
+  one.
+- Add a dish from a second restaurant to a cart: `409 cart_restaurant_mismatch`.
+- `POST /orders/{order_id}/cancel` cancels a paid order (`by_customer`), and the
+  hold is dropped (`voided`); a second cancel gets `409 invalid_transition`.
+- Watch an unpaid order expire: make the slow card's bank slower than a short
+  pay window, `SLOW_CARD_DELAY=5m ORDER_PAY_WINDOW=1m ORDER_EXPIRY_EVERY=5s make up`,
+  check out with `4000000000007777` and keep reading the order. About a minute
+  later it's `cancelled` (`expired`, by `system`); when the card finally settles,
+  the hold is dropped. `make up` on its own goes back to the defaults.
 
 ### Mock payment provider
 
 `make up` also starts the provider on **http://localhost:8090**, with QuickBytes as
-its merchant. Its dev key is `sk_test_dev_only_quickbytes_0123456789abcdef`. Only
-these test cards are accepted:
-
-| Card number | What happens |
-|---|---|
-| `4242424242424242` | Approved: `201`, `authorized` |
-| `4000000000000002` | Declined: `402`, `card_declined` (the failed payment comes with it) |
-| `4000000000009995` | Not enough money: `402`, `insufficient_funds` |
-| `4000000000007777` | Slow: `201`, `processing`; `authorized` about 10 seconds later (`SLOW_CARD_DELAY`), announced by a `payment.authorized` webhook (or seen with `GET`) |
-| `4000000000003333` | Hang: authorized at once, but the answer comes after 30 seconds |
+its merchant. Its dev key is `sk_test_dev_only_quickbytes_0123456789abcdef`. It
+takes the [test cards](#test-cards) above; you can also call it directly, the way
+the API does:
 
 ```bash
 KEY='Authorization: Bearer sk_test_dev_only_quickbytes_0123456789abcdef'
@@ -549,6 +529,7 @@ against it.
 | `GET /orders` | The customer's newest 50 orders, with their dishes. |
 | `GET /orders/{order_id}` | One order with its status history (each move, who made it, when). Someone else's gets 404. |
 | `POST /orders/{order_id}/cancel` | Cancel while `placed` or `paid`; later gets `409 invalid_transition`. |
+| `POST /webhooks/payprovider` | The payment provider's signed webhooks (`QB-Signature`). Unsigned, forged or older than 5 minutes: `400 invalid_webhook`. A repeat is answered `200` and changes nothing. |
 | `GET /restaurants?lat=…&lng=…` | Restaurants whose delivery zone covers that point, closest first. Public, paginated with `next_cursor`. |
 | `GET /restaurants/{id}` | One restaurant. Public. |
 | `POST /restaurants` | Create a restaurant (needs a restaurant profile), optionally with `delivery_fee_kurus` and `min_basket_kurus` (both default to 0). |
@@ -620,7 +601,7 @@ Each phase ends in a working, demoable state with passing CI.
 | Phase | Builds | Done when |
 |---|---|---|
 | ✅ **1. Foundation** | Accounts, restaurants, menus with caching, rate limits, API docs, demo data, CI | You can sign up, create a restaurant, add a menu, and read it back fast from cache. |
-| **2. Orders and payments** | Cart, checkout, order state machine, mock payment service, webhooks, idempotency, outbox | An order can be placed and paid. Test cards produce declines and timeouts, and retries never double-charge. |
+| ✅ **2. Orders and payments** | Cart, checkout, order state machine, mock payment service, webhooks, idempotency, outbox | An order can be placed and paid. Test cards produce declines and timeouts, and retries never double-charge. |
 | **3. Drivers and basic dispatch** | Location ingest, live positions in Redis, nearest-driver assignment, accept/reject | A ready order is offered to the nearest free driver and reassigned if they reject. |
 | **4. Routing and batching** | OSRM with Istanbul data, Python optimizer, gRPC, multi-order trips | Several orders are combined into one trip with a sensible stop order on real streets. |
 | **5. Simulator and live dashboard** | Driver simulator, order generator, web map | You can watch 50 drivers deliver orders around Istanbul. |
