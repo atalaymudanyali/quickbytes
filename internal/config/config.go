@@ -47,6 +47,9 @@ type Config struct {
 	OutboxRelay      bool
 	KafkaBrokers     []string
 	OutboxRelayEvery time.Duration
+	// OutboxCleanupEvery is how often published events older than 7 days
+	// are deleted from the outbox.
+	OutboxCleanupEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -81,6 +84,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OutboxRelayEvery, err = getDuration("OUTBOX_RELAY_EVERY", 500*time.Millisecond); err != nil {
+		return Config{}, err
+	}
+	if cfg.OutboxCleanupEvery, err = getDuration("OUTBOX_CLEANUP_EVERY", time.Hour); err != nil {
 		return Config{}, err
 	}
 	if cfg.OutboxRelay, err = getBool("OUTBOX_RELAY"); err != nil {

@@ -63,6 +63,8 @@ services:
       # watch events pile up in the outbox: OUTBOX_RELAY=false make up
       OUTBOX_RELAY: ${OUTBOX_RELAY-true}
       KAFKA_BROKERS: redpanda:9092
+      # How often published events older than 7 days are deleted.
+      OUTBOX_CLEANUP_EVERY: ${OUTBOX_CLEANUP_EVERY-1h}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -145,6 +147,8 @@ services:
     profiles: [console]
     environment:
       KAFKA_BROKERS: redpanda:9092
+      # How often published events older than 7 days are deleted.
+      OUTBOX_CLEANUP_EVERY: ${OUTBOX_CLEANUP_EVERY-1h}
       REDPANDA_ADMINAPI_ENABLED: "true"
       REDPANDA_ADMINAPI_URLS: http://redpanda:9644
     ports:

@@ -141,6 +141,8 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Warn("OUTBOX_RELAY is off: order events wait in the outbox, unpublished")
 	}
+	// Published events older than 7 days are deleted. Stops with ctx.
+	go outbox.RunCleanup(ctx, pool, cfg.OutboxCleanupEvery, logger)
 
 	errCh := make(chan error, 1)
 	go func() {
