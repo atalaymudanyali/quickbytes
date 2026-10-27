@@ -10,19 +10,34 @@ DEV_REDIS_URL ?= redis://localhost:6379/0
 # local database, so these accounts never exist anywhere real.
 SEED_PASSWORD ?= quickbytes-demo
 
-.PHONY: up down db run test lint fmt seed seed-reset bench-near-me load-menu swagger-ui
+.PHONY: up down db topics events console run test lint fmt seed seed-reset bench-near-me load-menu swagger-ui
 
-up: db ## Start everything (database, API, payment provider) in Docker
+up: db topics ## Start everything (database, Redpanda, API, payment provider) in Docker
 	docker compose up --build -d
 
-down: ## Stop everything (data is kept in a Docker volume)
-	docker compose down
+down: ## Stop everything, the console too (data is kept in Docker volumes)
+	docker compose --profile console down
 
 db: ## Start only the database and Redis, and create any database that's missing
 	docker compose up -d --wait postgres redis
 	docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U quickbytes -d quickbytes -f - < scripts/init-databases.sql
 
-run: db ## Run the API on your machine against the Docker database
+topics: ## Start Redpanda and create its topics if they're missing
+	docker compose up -d --wait redpanda
+	@# Topics are created on purpose, here, so a typo in a topic name fails
+	@# loudly instead of quietly making a new, empty topic.
+	docker compose exec -T redpanda rpk cluster config set auto_create_topics_enabled false
+	docker compose exec -T redpanda rpk topic create orders --partitions 3 --replicas 1 --if-not-exists
+
+events: topics ## Watch order events live, from the first one (Ctrl+C to stop)
+	docker compose exec redpanda rpk topic consume orders --offset start \
+		--format 'partition %p  offset %o  key %k  %h{%k=%v }\n%v\n\n'
+
+console: topics ## Open Redpanda Console (browse topics and messages) at http://localhost:8088
+	docker compose --profile console up -d console
+	@echo "Redpanda Console: http://localhost:8088"
+
+run: db topics ## Run the API on your machine against the Docker database
 	set -a && . ./.env && set +a && go run ./cmd/api
 
 test: db ## Run all tests, including the ones that need the database

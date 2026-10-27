@@ -59,6 +59,12 @@ services:
       PAYPROVIDER_WEBHOOK_SECRET: whsec_dev_only_quickbytes_0123456789abcdef
       # How often the reconcile loop settles payments that need work.
       PAYMENT_RECONCILE_EVERY: ${PAYMENT_RECONCILE_EVERY-5s}
+      # Publish order events from the outbox to Redpanda. Turn the relay off to
+      # watch events pile up in the outbox: OUTBOX_RELAY=false make up
+      OUTBOX_RELAY: ${OUTBOX_RELAY-true}
+      KAFKA_BROKERS: redpanda:9092
+      # How often published events older than 7 days are deleted.
+      OUTBOX_CLEANUP_EVERY: ${OUTBOX_CLEANUP_EVERY-1h}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -71,6 +77,10 @@ services:
       # Started first, but not required to be healthy: the API works without
       # its cache (it reads from the database instead).
       redis:
+        condition: service_started
+      # Started first, but not waited for either: while Redpanda is down,
+      # order events wait in the outbox and go out once it's back.
+      redpanda:
         condition: service_started
 
   # The mock payment provider: a fake card processor playing an outside company
@@ -103,6 +113,50 @@ services:
       postgres:
         condition: service_healthy
 
+  # The event stream (Kafka's protocol, one small container). The API publishes
+  # order events to its "orders" topic; `make topics` creates that topic.
+  redpanda:
+    image: redpandadata/redpanda:v26.2.6
+    command:
+      - redpanda
+      - start
+      # Development settings: one CPU core, a small memory budget, no
+      # production checks.
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      # Two doors into the same broker: containers use redpanda:9092, this
+      # machine (make run, rpk on the host) uses localhost:19092. Each door
+      # tells clients the address to come back on.
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "127.0.0.1:19092:19092"
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # A web page to browse topics and messages, only started by `make console`
+  # (the "console" profile keeps it out of `make up`).
+  console:
+    image: redpandadata/console:v3.12.0
+    profiles: [console]
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      # How often published events older than 7 days are deleted.
+      OUTBOX_CLEANUP_EVERY: ${OUTBOX_CLEANUP_EVERY-1h}
+      REDPANDA_ADMINAPI_ENABLED: "true"
+      REDPANDA_ADMINAPI_URLS: http://redpanda:9644
+    ports:
+      - "127.0.0.1:8088:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
   # Load-testing tool, only started by `make load-menu` (the "tools" profile
   # keeps it out of `make up`).
   k6:
@@ -115,3 +169,4 @@ services:
 
 volumes:
   pgdata:
+  redpanda:

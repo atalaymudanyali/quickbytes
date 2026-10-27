@@ -23,6 +23,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
+	"github.com/atalaymudanyali/quickbytes/internal/outbox"
 	"github.com/atalaymudanyali/quickbytes/internal/payments"
 	"github.com/atalaymudanyali/quickbytes/internal/ratelimit"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
@@ -127,6 +128,21 @@ func run(logger *slog.Logger) error {
 	go paymentStore.RunReconcile(ctx, cfg.PaymentReconcileEvery, logger)
 	// Idempotency keys older than 24 hours are deleted. This loop stops with ctx too.
 	go idempotencyStore.RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
+	// Order events wait in the outbox until the relay publishes them to
+	// Redpanda. Redpanda being down doesn't stop the API: the relay keeps
+	// trying, and events pile up meanwhile. Stops with ctx.
+	if cfg.OutboxRelay {
+		pub, err := outbox.NewKafkaPublisher(cfg.KafkaBrokers)
+		if err != nil {
+			return err
+		}
+		defer pub.Close()
+		go outbox.NewRelay(pool, pub, logger).Run(ctx, cfg.OutboxRelayEvery)
+	} else {
+		logger.Warn("OUTBOX_RELAY is off: order events wait in the outbox, unpublished")
+	}
+	// Published events older than 7 days are deleted. Stops with ctx.
+	go outbox.RunCleanup(ctx, pool, cfg.OutboxCleanupEvery, logger)
 
 	errCh := make(chan error, 1)
 	go func() {

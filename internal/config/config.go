@@ -5,6 +5,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,6 +40,16 @@ type Config struct {
 	// payments that need work (an unknown result, a slow card, a capture
 	// that didn't go through).
 	PaymentReconcileEvery time.Duration
+	// OutboxRelay turns on the relay that publishes order events from the
+	// outbox to the event stream at KafkaBrokers ("host:port", comma
+	// separated). With it off, events wait in the outbox. OutboxRelayEvery
+	// is how often the relay looks for waiting events.
+	OutboxRelay      bool
+	KafkaBrokers     []string
+	OutboxRelayEvery time.Duration
+	// OutboxCleanupEvery is how often published events older than 7 days
+	// are deleted from the outbox.
+	OutboxCleanupEvery time.Duration
 }
 
 func Load() (Config, error) {
@@ -71,6 +83,23 @@ func Load() (Config, error) {
 	if cfg.PaymentReconcileEvery, err = getDuration("PAYMENT_RECONCILE_EVERY", 5*time.Second); err != nil {
 		return Config{}, err
 	}
+	if cfg.OutboxRelayEvery, err = getDuration("OUTBOX_RELAY_EVERY", 500*time.Millisecond); err != nil {
+		return Config{}, err
+	}
+	if cfg.OutboxCleanupEvery, err = getDuration("OUTBOX_CLEANUP_EVERY", time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.OutboxRelay, err = getBool("OUTBOX_RELAY"); err != nil {
+		return Config{}, err
+	}
+	for b := range strings.SplitSeq(os.Getenv("KAFKA_BROKERS"), ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			cfg.KafkaBrokers = append(cfg.KafkaBrokers, b)
+		}
+	}
+	if cfg.OutboxRelay && len(cfg.KafkaBrokers) == 0 {
+		return Config{}, fmt.Errorf("OUTBOX_RELAY is on, so KAFKA_BROKERS is required: where Redpanda is (localhost:19092 from this machine, redpanda:9092 in Docker)")
+	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
@@ -97,6 +126,19 @@ func getDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration like 15m or 30s, got %q", key, v)
 	}
 	return d, nil
+}
+
+// getBool reads true/false (also 1/0); unset is false.
+func getBool(key string) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false, got %q", key, v)
+	}
+	return b, nil
 }
 
 func getenv(key, fallback string) string {
