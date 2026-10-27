@@ -86,6 +86,11 @@ services:
       # How long the slow test card's payment stays processing before it's
       # authorized. Change it like: SLOW_CARD_DELAY=30s make up
       SLOW_CARD_DELAY: ${SLOW_CARD_DELAY-10s}
+      # Where the provider sends its webhooks (payment.authorized...), signed
+      # with this development-only secret; the API checks them with the same
+      # one. An empty WEBHOOK_URL turns webhooks off: WEBHOOK_URL= make up
+      WEBHOOK_URL: ${WEBHOOK_URL-http://api:8080/webhooks/payprovider}
+      WEBHOOK_SECRET: whsec_dev_only_quickbytes_0123456789abcdef
     ports:
       - "127.0.0.1:8090:8090"
     depends_on:

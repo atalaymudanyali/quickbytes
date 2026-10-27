@@ -53,6 +53,21 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("merchant ready", "merchant_id", merchant.ID, "name", merchant.Name)
 
+	// The merchant's webhook endpoint, from the environment like its key.
+	endpoints := payprovider.NewEndpoints(pool)
+	if cfg.WebhookURL != "" {
+		ep, err := endpoints.Ensure(ctx, merchant.ID, cfg.WebhookURL, cfg.WebhookSecret)
+		if err != nil {
+			return err
+		}
+		logger.Info("webhooks on", "endpoint_id", ep.ID, "url", ep.URL)
+	} else {
+		if err := endpoints.Disable(ctx, merchant.ID); err != nil {
+			return err
+		}
+		logger.Info("webhooks off (no WEBHOOK_URL)")
+	}
+
 	payments := payprovider.NewPayments(pool, cfg.SlowCardDelay)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

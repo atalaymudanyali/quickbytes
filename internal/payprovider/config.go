@@ -16,6 +16,10 @@ type Config struct {
 	// replaces the old one (a key rotation).
 	MerchantName string
 	MerchantKey  string
+	// WebhookURL is where the merchant's webhooks go; empty turns them off.
+	// WebhookSecret signs them (the merchant checks with the same one).
+	WebhookURL    string
+	WebhookSecret string
 	// SlowCardDelay is how long a payment with the slow test card stays
 	// processing before it's authorized.
 	SlowCardDelay time.Duration
@@ -37,6 +41,8 @@ func LoadConfig() (Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MerchantName:    getenv("PAYPROVIDER_MERCHANT_NAME", "quickbytes"),
 		MerchantKey:     os.Getenv("PAYPROVIDER_MERCHANT_KEY"),
+		WebhookURL:      os.Getenv("WEBHOOK_URL"),
+		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
 		ShutdownTimeout: 10 * time.Second,
 	}
 	var err error
@@ -54,6 +60,9 @@ func LoadConfig() (Config, error) {
 	}
 	if len(cfg.MerchantKey) < minKeyLength {
 		return Config{}, fmt.Errorf("PAYPROVIDER_MERCHANT_KEY is required and must be at least %d characters (generate one with: echo sk_test_$(openssl rand -hex 24))", minKeyLength)
+	}
+	if cfg.WebhookURL != "" && len(cfg.WebhookSecret) < minKeyLength {
+		return Config{}, fmt.Errorf("WEBHOOK_SECRET is required with WEBHOOK_URL and must be at least %d characters (generate one with: echo whsec_$(openssl rand -hex 24))", minKeyLength)
 	}
 	return cfg, nil
 }
