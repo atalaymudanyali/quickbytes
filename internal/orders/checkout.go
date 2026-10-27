@@ -91,7 +91,8 @@ type Finish func(ctx context.Context, tx pgx.Tx, o Order) error
 //     and refuse anything that can't be ordered.
 //  2. In one transaction: lock the cart, check it still holds exactly what was
 //     priced, copy everything into the order, write the first history row and
-//     empty the cart. Either all of that happens or none of it does.
+//     the order.placed event, and empty the cart. Either all of that happens
+//     or none of it does.
 //
 // Two checkouts at once queue at the cart lock. The second one then finds no
 // cart (the first emptied it) and gets ErrCartEmpty, so one cart can never
@@ -156,7 +157,8 @@ func (s *Store) PlaceAnd(ctx context.Context, customerProfileID, addressID uuid.
 			return err
 		}
 		placed := Change{OrderID: o.ID, To: Placed, At: o.CreatedAt}
-		if err := writeHistory(ctx, tx, placed, Actor{Role: users.RoleCustomer, ProfileID: customerProfileID}); err != nil {
+		f := facts{restaurantID: o.RestaurantID, customerProfileID: customerProfileID, totalKurus: o.TotalKurus}
+		if err := record(ctx, tx, placed, Actor{Role: users.RoleCustomer, ProfileID: customerProfileID}, f); err != nil {
 			return err
 		}
 		// Its lines go with it (ON DELETE CASCADE).

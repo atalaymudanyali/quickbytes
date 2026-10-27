@@ -207,20 +207,21 @@ func LockIn(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (Status, error) {
 }
 
 // transition makes one move inside a transaction it's given, so later work that
-// must happen with the move (taking the payment, publishing an event) can join
-// the same transaction.
+// must happen with the move (taking the payment) can join the same
+// transaction. The move's event is written in it too (see record).
 //
 // It locks the order row first (FOR UPDATE). A second move on the same order
 // waits here until the first commits, then reads the new status, so two moves
 // can never both start from the same status.
 func transition(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by Actor) (Change, error) {
 	var from Status
-	var customer, owner uuid.UUID
+	var owner uuid.UUID
+	var f facts
 	err := tx.QueryRow(ctx, `
-		SELECT o.status, o.customer_profile_id, r.owner_profile_id
+		SELECT o.status, o.customer_profile_id, o.restaurant_id, o.total_kurus, r.owner_profile_id
 		FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
 		WHERE o.id = $1
-		FOR UPDATE OF o`, orderID).Scan(&from, &customer, &owner)
+		FOR UPDATE OF o`, orderID).Scan(&from, &f.customerProfileID, &f.restaurantID, &f.totalKurus, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Change{}, ErrNotFound
 	}
@@ -229,7 +230,7 @@ func transition(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by 
 	}
 	// Someone else's order looks the same as no order: we don't confirm it
 	// exists to people who can't see it.
-	if !canSee(by, customer, owner) {
+	if !canSee(by, f.customerProfileID, owner) {
 		return Change{}, ErrNotFound
 	}
 
@@ -247,7 +248,7 @@ func transition(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, a Action, by 
 	if err != nil {
 		return Change{}, fmt.Errorf("update order: %w", err)
 	}
-	if err := writeHistory(ctx, tx, c, by); err != nil {
+	if err := record(ctx, tx, c, by, f); err != nil {
 		return Change{}, err
 	}
 	return c, nil
