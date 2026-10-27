@@ -51,10 +51,14 @@ lint: ## Check formatting and common mistakes
 fmt:
 	gofmt -w .
 
-seed: db ## Fill the dev database with Istanbul demo data (running it again adds only what's missing)
+seed: db ## Fill the dev database with Istanbul demo data and a few orders (running it again adds only what's missing)
+	@# The demo orders are placed through the running API, so start it first.
+	docker compose up -d --wait api payprovider
 	DATABASE_URL="$(DEV_DATABASE_URL)" REDIS_URL="$(DEV_REDIS_URL)" SEED_PASSWORD="$(SEED_PASSWORD)" go run ./cmd/seed
 
 seed-reset: db ## Delete only the demo data (accounts on @demo.quickbytes.test and what they own), then seed it fresh
+	@# The demo orders are placed through the running API, so start it first.
+	docker compose up -d --wait api payprovider
 	DATABASE_URL="$(DEV_DATABASE_URL)" REDIS_URL="$(DEV_REDIS_URL)" SEED_PASSWORD="$(SEED_PASSWORD)" go run ./cmd/seed -reset
 
 bench-near-me: db ## Time the near-me query on 100k generated restaurants, without and with the index

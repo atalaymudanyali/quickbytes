@@ -336,6 +336,13 @@ Beyoğlu, with real street coordinates and Turkish menus priced in kuruş (96 di
 9 of them with options), each restaurant's delivery fee and minimum basket, and
 demo accounts with delivery addresses near them. Running it again only adds what's
 missing, so IDs stay the same.
+It also places six orders for `musteri@` at Hasan Usta Kebap Kadıköy, one per
+status worth seeing: `paid` (waiting in the kitchen queue, money held), `accepted`
+and `ready` (money taken), and `cancelled` by the customer (hold dropped), rejected
+after accepting (money given back) and `payment_failed` (declined card). They go
+through the running API like the app's own requests (`make seed` starts it), so the
+provider, the payment ledger and the order events all agree. A customer who already
+has orders gets none (`-orders=false` skips them).
 `make seed-reset` deletes the demo accounts and everything they own, then seeds
 fresh. Other accounts are never touched. Both refuse any database that isn't local.
 

@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -26,14 +28,15 @@ import (
 
 func main() {
 	reset := flag.Bool("reset", false, "delete all demo accounts (and their restaurants and menus) before seeding")
+	withOrders := flag.Bool("orders", true, "also place demo orders through the running API (SEED_API_URL)")
 	flag.Parse()
-	if err := run(context.Background(), os.Stdout, *reset); err != nil {
+	if err := run(context.Background(), os.Stdout, *reset, *withOrders); err != nil {
 		fmt.Fprintln(os.Stderr, "seed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, out io.Writer, reset bool) error {
+func run(ctx context.Context, out io.Writer, reset, withOrders bool) error {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
@@ -97,7 +100,39 @@ func run(ctx context.Context, out io.Writer, reset bool) error {
 		return err
 	}
 	printReport(out, data, rep)
+	if !withOrders {
+		return nil
+	}
+
+	// The orders go through the running API, like the app's, so the payment
+	// provider, the ledger and the order events all see them.
+	apiURL := os.Getenv("SEED_API_URL")
+	if apiURL == "" {
+		apiURL = "http://localhost:8080"
+	}
+	orderSeeder := &seed.OrderSeeder{API: apiURL, Client: &http.Client{Timeout: 30 * time.Second}, Password: password}
+	orderRep, err := orderSeeder.PlaceOrders(ctx, seed.DemoOrders)
+	if err != nil {
+		return fmt.Errorf("demo orders: %w", err)
+	}
+	printOrders(out, seed.DemoOrders, orderRep)
 	return nil
+}
+
+func printOrders(out io.Writer, plan seed.OrderPlan, rep seed.OrderReport) {
+	fmt.Fprintf(out, "\nDemo orders (%s at %s):\n", plan.Customer, plan.Restaurant)
+	if rep.Skipped {
+		fmt.Fprintf(out, "  none added: the customer already has orders (make seed-reset starts over)\n")
+		return
+	}
+	for _, o := range rep.Orders {
+		status := o.Status
+		if o.CancelReason != nil {
+			status += " (" + *o.CancelReason + ")"
+		}
+		fmt.Fprintf(out, "  %s  %s\n", o.ID, status)
+	}
+	fmt.Fprintf(out, "  the kitchen queue: log in as %s, GET /me/restaurants/{id}/orders\n", plan.Owner)
 }
 
 func printReport(out io.Writer, d seed.Data, rep seed.Report) {
