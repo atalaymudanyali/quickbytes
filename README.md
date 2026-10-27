@@ -16,15 +16,17 @@ side menu.
 > addresses and a server-side cart priced live from the menu, and checkout turns the
 > cart into an order that moves through a state machine. Checkout is safe to retry
 > (idempotency keys). A mock payment provider runs as its own service, with test
-> cards for every outcome. Next: payments in the API (authorize at checkout, capture
-> when the restaurant accepts). See the [roadmap](#roadmap).
+> cards for every outcome; the API authorizes at checkout, captures when the
+> restaurant accepts, and hears back by signed webhooks. Every order move is
+> published as an event to Redpanda through a transactional outbox. Next: the
+> phase 2 wrap-up. See the [roadmap](#roadmap).
 
 ## Quick start
 
 Needs Docker and Go 1.27+.
 
 ```bash
-make up        # start PostgreSQL, Redis, the API and the mock payment provider in Docker
+make up        # start PostgreSQL, Redis, Redpanda, the API and the mock payment provider in Docker
 make seed      # fill it with Istanbul demo data
 ```
 
@@ -147,6 +149,20 @@ Phase 2 so far:
   changes nothing). Webhooks go through the same code as the reconcile loop, which
   stays as the safety net and now waits 30 s before polling a slow card. A test
   switch (`WEBHOOK_SEND_TWICE`) sends every webhook twice.
+- **Order events (transactional outbox):** every order move (placed, paid,
+  accepted, ready, cancelled) is published to **Redpanda** (Kafka's protocol),
+  topic `orders`, for dispatch to react to in phase 3. Saving the move in
+  PostgreSQL and publishing to Redpanda can't be one all-or-nothing step, so the
+  event is written into an `outbox` table **in the move's own transaction**: it
+  exists if and only if the move committed. A relay in the API then publishes the
+  waiting rows and stamps them, one transaction per round. Several relays can run
+  (`FOR UPDATE SKIP LOCKED`), the message key is the order ID (one order's events
+  stay on one partition, in order), and a relay only takes an order's oldest
+  waiting event, so a second relay can't overtake the first. Delivery is at least
+  once: each event carries an ID for consumers to drop repeats. While Redpanda is
+  down, orders keep working, events pile up, and the relay backs off (1 s up to
+  30 s) and sends them all once it's back. Published rows are deleted after
+  7 days.
 
 ## Measured
 
@@ -248,6 +264,31 @@ Broken on purpose:
 | The guest-book row written outside the apply transaction | `the failed webhook is in the guest book: its retry would be skipped` |
 | No 5-minute check on the signature's time | a 6-minute-old webhook got `200 {"outcome":"applied"}`, and `order paid after a refused webhook` |
 | Redirects followed | the redirected webhook arrived as an empty `GET`: `webhook signature doesn't match` |
+
+### Order events: Redpanda down, API killed
+
+Live, with `make up` (relay polling every 500 ms, a 10 s limit per publish):
+
+| What | Result |
+|---|---|
+| Place, pay, accept, ready | `order.placed`, `.paid`, `.accepted`, `.ready` on one partition, offsets 0–3, keyed by the order ID |
+| Redpanda stopped, 2 checkouts (6 events) | both checkouts answer `paid`; the relay backs off (1 s, 2 s…) |
+| …Redpanda started again | all 6 events published within **~5 s**, each order's in order |
+| API killed (`docker compose kill`) while the relay held a batch | the events stayed waiting; after the restart they were published, **0** repeats |
+| Two relays side by side (Docker API + a second API on :8081), 10 orders | **62** outbox rows → **62** messages, **0** repeats |
+
+The relay's tests use a fake publisher and franz-go's in-memory Kafka (`kfake`),
+so CI needs no Redpanda
+([`internal/outbox`](internal/outbox)). Broken on purpose:
+
+| Broken on purpose | What the tests said |
+|---|---|
+| No oldest-event rule | `relay B published [x2 y1], want only y1: x1 is A's, x2 must wait for x1` |
+| `FOR UPDATE` without `SKIP LOCKED` | `relay B waited for relay A's rows instead of skipping them` |
+| No row lock at all | `event … published 2 times, want 1` |
+| Rows stamped even when publishing failed | `event … published 0 times, want 1` (lost) |
+| franz-go's default "never cancel a sent message" | `want an error when the broker never answered in time`: the relay's transaction stayed open as long as the broker was silent |
+| The move's event left out of the transaction path | `0 events, want 1` for every move |
 
 ## Try it
 
@@ -408,6 +449,24 @@ docker compose logs payprovider | grep webhook
 - **Off:** `WEBHOOK_URL= make up` turns webhooks off; the reconcile loop still
   settles every payment, only later. `make up` turns them back on.
 
+### Order events
+
+Watch every order event live (`rpk topic consume` inside the Redpanda container),
+then place and pay an order in another terminal:
+
+```bash
+make events     # partition, offset, key (the order ID), event-id / event-type, then the JSON
+make console    # or browse topics and messages at http://localhost:8088
+```
+
+- **Redpanda down:** `docker compose stop redpanda`, place an order (checkout
+  still answers), and see the events wait:
+  `docker compose exec -T postgres psql -U quickbytes -d quickbytes -c "SELECT seq, type, published_at FROM outbox ORDER BY seq DESC LIMIT 5"`.
+  `docker compose logs -f api | grep outbox` shows the relay backing off. After
+  `docker compose start redpanda` they appear in `make events`, in order.
+- **Relay off:** `OUTBOX_RELAY=false make up` lets events pile up in the outbox;
+  `make up` sends them.
+
 ### API documentation
 
 With the API running, open **http://localhost:8080/docs** for interactive docs
@@ -479,11 +538,12 @@ an `X-Request-ID` header that matches the server's log line.
 
 ## Tech stack
 
-**In use now:** Go (`net/http`, pgx, goose) · PostgreSQL 17 + PostGIS 3.5 · Redis ·
-OpenAPI 3.0 + Swagger UI · k6 · Docker Compose · GitHub Actions
+**In use now:** Go (`net/http`, pgx, goose, franz-go) · PostgreSQL 17 + PostGIS 3.5 ·
+Redis · Redpanda (Kafka API) · OpenAPI 3.0 + Swagger UI · k6 · Docker Compose ·
+GitHub Actions
 
 **Coming in later phases:** Python + OR-Tools (route optimizer, over gRPC) ·
-Redpanda (Kafka API) · OSRM with Istanbul OpenStreetMap data · SwiftUI + MapKit ·
+OSRM with Istanbul OpenStreetMap data · SwiftUI + MapKit ·
 Prometheus + Grafana · OpenTelemetry
 
 Everything runs locally and costs nothing: no paid APIs or keys.
@@ -503,6 +563,7 @@ considered, and what it costs.
 - [0007](docs/adr/0007-rate-limiting.md) Login rate limits: slow down, never lock
 - [0008](docs/adr/0008-payments-find-out-never-charge-again.md) Payments: a timeout is "unknown", found out later, never charged again
 - [0009](docs/adr/0009-payment-webhooks.md) Payment webhooks: signed, sent at least once, applied by a ratchet
+- [0010](docs/adr/0010-transactional-outbox.md) Order events: a transactional outbox, relayed to Redpanda
 
 ## Roadmap
 
