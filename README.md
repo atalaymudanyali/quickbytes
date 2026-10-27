@@ -212,6 +212,43 @@ these numbers compare the three setups; they don't predict a real server's capac
 The rate-limit checks run before the database lookup and the password hash, so a
 blocked attacker costs the server about 20 times less than a guess.
 
+### Checkout: retried hard, never charged twice
+
+`make load-checkout` plays customers in a tunnel. The 7 demo customers check out at
+the same time, and each checkout is sent **10 times at once with one
+`Idempotency-Key`**. A try that gets `409 idempotency_in_progress`, or no answer,
+waits a second and tries again. With the hang card, the first tries give up after
+1 s, as if the answer got lost. The cards take turns (approve, decline, slow, hang),
+3 rounds each. Then the test asks the **provider itself**, the "bank", how many
+payments it holds for each order, and a SQL query counts every order with more
+than one payment there, ever ([`scripts/load-checkout.js`](scripts/load-checkout.js)).
+Median of 3 runs:
+
+| What | Result |
+|---|---|
+| Checkouts / tries sent | 84 / 1,617 |
+| Answered from the stored first answer (`Idempotent-Replayed: true`) | 777 |
+| `409 idempotency_in_progress` (a try while the first still ran) | 756 (Retry-After: 1) |
+| Answers lost on purpose (1 s timeout, hang card) | 21 |
+| Payments at the provider | **84**: one per checkout |
+| **Double charges** (orders with more than one payment at the provider) | **0** |
+| Extra orders (a key that made more than one) | **0** |
+| First real answer at "Place order": approve, decline, slow | ~20 ms |
+| …hang card (first try lost at 1 s, the retry at 2 s) | ~2.0 s: the stored first answer, `placed` with payment `pending` |
+| Outbox lag, order move written → published to Redpanda (p50 / p95) | 322 ms / 484 ms |
+
+The hang card's retry doesn't wait for the 5-second provider call. Checkout saves
+a first answer in the order's own transaction, before the card is asked, so a
+retry gets an honest "placed, payment pending" right away, and a retry after the
+call ends gets `paid`. The outbox lag is mostly the relay's 500 ms polling.
+
+Broken on purpose: `KEYS=fresh make load-checkout` gives every try a new key, like
+an app that forgets to reuse it. The run **fails** (`checks` threshold): of each
+10 tries, one makes the order and the other 9 are refused with a `409` because the
+cart is already empty (the cart lock from checkout). Still one order and no double
+charge, but the app gets 9 errors for an order that went through, and can't tell
+which answer to believe. The key is what turns those 9 into the same answer.
+
 ### Payments: timeouts and retries
 
 `make test` runs these against the real provider over HTTP, with the API's client
