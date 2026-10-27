@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/payprovider"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
+	"github.com/atalaymudanyali/quickbytes/internal/webhook"
 )
 
 // The provider's test cards.
@@ -205,6 +207,60 @@ func TestPlugNoAnswers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := p.Capture(ctx, "key", "pay"); !errors.Is(err, ErrNoAnswer) || IsRefused(err) {
 				t.Errorf("got %v, want ErrNoAnswer", err)
+			}
+		})
+	}
+}
+
+// The plug reads the webhooks the real provider writes: its own Event type,
+// encoded and signed as its sender does.
+func TestPlugReadsProviderWebhooks(t *testing.T) {
+	const secret = "whsec_test_0123456789abcdef0123456789"
+	now := time.Now()
+	ref := uuid.NewString()
+	declined := payprovider.DeclineCardDeclined
+	event := func(typ, status string, decline *string) []byte {
+		b, err := json.Marshal(payprovider.Event{
+			ID: uuid.New(), Type: typ, CreatedAt: now,
+			Data: payprovider.EventData{Payment: payprovider.Payment{
+				ID: uuid.New(), AmountKurus: 47990, Currency: "TRY", Status: status, DeclineCode: decline,
+				CardLast4: "4242", Reference: &ref, CreatedAt: now, UpdatedAt: now,
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	body := event("payment.failed", payprovider.StatusFailed, &declined)
+	ev, err := ParsePayProviderWebhook(secret, webhook.Sign(secret, now, body), body, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Type != "payment.failed" || ev.Payment.Status != Failed || ev.Payment.DeclineCode == nil ||
+		*ev.Payment.DeclineCode != CardDeclined || ev.Payment.AmountKurus != 47990 || ev.Reference != ref || ev.ID == "" {
+		t.Errorf("parsed %+v", ev)
+	}
+
+	good := event("payment.authorized", payprovider.StatusAuthorized, nil)
+	mixed := event("payment.captured", payprovider.StatusAuthorized, nil)
+	unknown := event("payment.disputed", "disputed", nil)
+	for name, tc := range map[string]struct {
+		sig  string
+		body []byte
+		want error
+	}{
+		"wrong secret":           {webhook.Sign("whsec_someone_else_0123456789abcdef", now, good), good, ErrBadWebhook},
+		"no signature":           {"", good, ErrBadWebhook},
+		"10 minutes old":         {webhook.Sign(secret, now.Add(-10*time.Minute), good), good, ErrBadWebhook},
+		"not JSON":               {webhook.Sign(secret, now, []byte("hello")), []byte("hello"), ErrBadWebhook},
+		"type and status differ": {webhook.Sign(secret, now, mixed), mixed, ErrBadWebhook},
+		"a type we don't know":   {webhook.Sign(secret, now, unknown), unknown, ErrUnsupportedWebhook},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParsePayProviderWebhook(secret, tc.sig, tc.body, now); !errors.Is(err, tc.want) {
+				t.Errorf("got %v, want %v", err, tc.want)
 			}
 		})
 	}

@@ -298,10 +298,17 @@ func (p *Payments) ByReference(ctx context.Context, merchantID uuid.UUID, refere
 	return list, nil
 }
 
-// addEvent appends the status a payment just reached to its history.
+// addEvent appends the status a payment just reached to its history, and
+// queues a webhook about it for each of the merchant's enabled endpoints.
+// Both are one statement inside the change's transaction: the change, its
+// event and its webhooks are kept or undone together.
 func addEvent(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID, status string) error {
-	_, err := tx.Exec(ctx,
-		"INSERT INTO payment_events (payment_id, status) VALUES ($1, $2)", paymentID, status)
+	_, err := tx.Exec(ctx, `
+		WITH ev AS (
+			INSERT INTO payment_events (payment_id, status) VALUES ($1, $2)
+			RETURNING id, payment_id, status
+		)
+		`+queueWebhooks, paymentID, status)
 	if err != nil {
 		return fmt.Errorf("add payment event: %w", err)
 	}

@@ -52,3 +52,39 @@ func nextStep(order orders.Status, pay Status) Step {
 	}
 	return Nothing
 }
+
+// rank orders our statuses from first to last. A payment only ever moves to a
+// higher rank: a ratchet. Two statuses share a rank when they're two
+// different endings of the same step (authorized or failed; captured or
+// voided).
+var rank = map[Status]int{
+	Pending:    0,
+	Unknown:    1,
+	Processing: 2,
+	Authorized: 3, Failed: 3,
+	Captured: 4, Voided: 4,
+	Refunded: 5,
+}
+
+// allowed says whether a payment we know as from may become to. News can
+// come in any order (a webhook retried after a newer one, our own timed-out
+// call after a webhook already told us), so older news must change nothing:
+//
+//   - the same status: allowed (nothing new, though it may bring the
+//     provider's ID);
+//   - out of failed, voided or refunded: never, they're final;
+//   - otherwise only forward, to a higher rank. Backwards is old news;
+//     sideways (authorized ↔ failed) contradicts what we know, and we keep
+//     what we know.
+//
+// Like nextStep it's pure, so the whole grid is tested without a database.
+func allowed(from, to Status) bool {
+	switch {
+	case from == to:
+		return true
+	case from == Failed || from == Voided || from == Refunded:
+		return false
+	default:
+		return rank[to] > rank[from]
+	}
+}

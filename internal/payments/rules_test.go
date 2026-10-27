@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -78,5 +79,26 @@ func TestBackoff(t *testing.T) {
 	}
 	if backoff(0) < backoffBase {
 		t.Fatal("attempt 0 must still wait")
+	}
+}
+
+// forward is the ratchet written out by hand: every move a payment may make.
+// Staying the same is always allowed; every pair not listed must be refused.
+var forward = map[Status][]Status{
+	Pending:    {Unknown, Processing, Authorized, Failed, Captured, Voided, Refunded},
+	Unknown:    {Processing, Authorized, Failed, Captured, Voided, Refunded},
+	Processing: {Authorized, Failed, Captured, Voided, Refunded},
+	Authorized: {Captured, Voided, Refunded},
+	Captured:   {Refunded},
+}
+
+func TestRatchetGrid(t *testing.T) {
+	for _, from := range allStatuses {
+		for _, to := range allStatuses {
+			want := from == to || slices.Contains(forward[from], to)
+			if got := allowed(from, to); got != want {
+				t.Errorf("%s → %s: allowed = %v, want %v", from, to, got, want)
+			}
+		}
 	}
 }

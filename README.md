@@ -108,7 +108,7 @@ Phase 2 so far:
   reusing the API's idempotency package, and the answer is stored in the payment's
   own transaction, so a retry never holds, takes or gives back money twice. Every
   status change is appended to an append-only history (a trigger refuses edits),
-  which webhooks will be sent from. Test cards cover approval, decline,
+  which its webhooks are sent from. Test cards cover approval, decline,
   insufficient funds, a slow card (`processing`, finished later by a background
   loop) and a card that hangs for 30 seconds. Its own OpenAPI file,
   [`api/payprovider.yaml`](api/payprovider.yaml), is checked against every answer
@@ -129,10 +129,24 @@ Phase 2 so far:
   (exponential backoff with jitter). It decides what to do the thermostat way:
   look at the order and the payment, and take the one step that brings them in
   line. Every payment change is appended to `payment_events` (append-only, by
-  trigger) with where it came from (`request` or `reconcile`). Several API copies
-  can run the loop at once: each takes due payments with `FOR UPDATE SKIP LOCKED`
-  and a one-minute lease. The customer sees the payment and its history on the
-  order; the restaurant doesn't.
+  trigger) with where it came from (`request`, `reconcile` or `webhook`). Several
+  API copies can run the loop at once: each takes due payments with
+  `FOR UPDATE SKIP LOCKED` and a one-minute lease. The customer sees the payment
+  and its history on the order; the restaurant doesn't.
+- **Payment webhooks:** instead of only asking, the API is **told**: the provider
+  posts `payment.authorized`, `.failed`, `.captured`, `.voided` and `.refunded` to
+  `POST /webhooks/payprovider`. Anyone could call that URL, so every webhook is
+  **signed** like Stripe's (`QB-Signature: t=…,v1=…`, HMAC-SHA256 of the time and
+  the raw body with a shared secret, compared in constant time, refused when more
+  than 5 minutes old so it can't be replayed). The provider queues each webhook in
+  the **same statement** as the payment change, and keeps trying while the API
+  doesn't answer 2xx: 1 s, 2 s, 4 s… up to an hour, with random jitter, for about
+  2 hours. So a webhook can arrive **twice** (the API remembers event IDs in a
+  `webhook_events` table, written in the same transaction as the change it makes)
+  and **out of order** (a payment's status only ever moves forward, so older news
+  changes nothing). Webhooks go through the same code as the reconcile loop, which
+  stays as the safety net and now waits 30 s before polling a slow card. A test
+  switch (`WEBHOOK_SEND_TWICE`) sends every webhook twice.
 
 ## Measured
 
@@ -188,7 +202,8 @@ blocked attacker costs the server about 20 times less than a guess.
 timeout cut to 300 ms so the hang card really times out
 ([`internal/payments/reconcile_test.go`](internal/payments/reconcile_test.go)).
 The live numbers are from `make up` with the default 5-second timeout and
-5-second reconcile loop:
+5-second reconcile loop, measured before webhooks existed (today the same path runs
+with `WEBHOOK_URL= make up`; see the next section for how webhooks changed them):
 
 | What | Result |
 |---|---|
@@ -206,6 +221,33 @@ Each safety net was also broken on purpose, to check a test catches it:
 | No one-minute grace before "never arrived" | `young payment: failed, want still pending` |
 | Provider calls stopped when the customer's request ends | `context canceled`: an answer about real money went unrecorded |
 | The order move not marking the payment due | `payment due: false`: an accept whose capture failed would never be retried |
+
+### Payments: webhooks
+
+Live, with `make up` (the slow card's bank takes 10 s; the provider's settler and
+sender each run every second). The times are from the API's own ledger
+(`payment_events`), checkout to `authorized`:
+
+| What | Result |
+|---|---|
+| Slow card, webhooks on (3 orders) | `paid` after **11.2–11.4 s**, learned `via webhook` |
+| Slow card, webhooks off (`WEBHOOK_URL=`, 2 orders) | `paid` after **31.8–34.7 s**, `via reconcile` (the first poll waits 30 s for a webhook) |
+| Hang card, webhooks on (3 orders) | the webhook lands **0.03–0.9 s** after checkout, while our call still waits; checkout answers **`paid`** after **5.1 s**, and no `unknown` is ever recorded |
+| API stopped for 30 s after a slow-card checkout | delivered on the provider's **5th try**, 21 s after it was queued; order `paid`, `via webhook` |
+| `WEBHOOK_SEND_TWICE=true` | 2 posts, both `200`; **1** `webhook_events` row, **1** status change |
+
+`make test` covers the same cases with the real provider and its sender posting to
+a real API over HTTP ([`internal/httpapi/webhooks_test.go`](internal/httpapi/webhooks_test.go)),
+including an API that answers `500` twice before the third try gets through.
+
+Broken on purpose:
+
+| Broken on purpose | What the tests said |
+|---|---|
+| No ratchet (a status may go backwards) | `outcome "applied", want "stale"`, and `ledger = [pending, authorized via webhook, unknown via request]`: our own timeout wiped out the webhook's news |
+| The guest-book row written outside the apply transaction | `the failed webhook is in the guest book: its retry would be skipped` |
+| No 5-minute check on the signature's time | a 6-minute-old webhook got `200 {"outcome":"applied"}`, and `order paid after a refused webhook` |
+| Redirects followed | the redirected webhook arrived as an empty `GET`: `webhook signature doesn't match` |
 
 ## Try it
 
@@ -278,12 +320,14 @@ history and its payment, and the cart is now empty. What the card does:
 |---|---|---|
 | `4242424242424242` | `paid` | `pending` → `authorized` |
 | `4000000000000002` | `cancelled` (`payment_failed`) | `pending` → `failed` (`card_declined`) |
-| `4000000000007777` | `placed`, then `paid` about 10 seconds later | `pending` → `processing` → `authorized` (via `reconcile`) |
-| `4000000000003333` | `placed` after a 5-second wait, then `paid` seconds later | `pending` → `unknown` (no answer in time) → `authorized` (via `reconcile`) |
+| `4000000000007777` | `placed`, then `paid` about 11 seconds later | `pending` → `processing` → `authorized` (via `webhook`) |
+| `4000000000003333` | `paid`, after a 5-second wait | `pending` → `authorized` (via `webhook`, while our call was still waiting) |
 
-Keep reading the order (`GET /orders/{order_id}`) to watch the last two settle: the
-API's reconcile loop asks the provider every few seconds, finding the hang card's
-payment by the order ID instead of charging again.
+Keep reading the order (`GET /orders/{order_id}`) to watch the slow card settle:
+the provider's webhook tells the API. With webhooks off (`WEBHOOK_URL= make up`),
+the API's reconcile loop finds out instead: the slow card after about 30 seconds,
+and the hang card goes `unknown` first, then `authorized` (via `reconcile`), found
+by the order ID instead of charging again.
 
 Then:
 
@@ -313,7 +357,7 @@ these test cards are accepted:
 | `4242424242424242` | Approved: `201`, `authorized` |
 | `4000000000000002` | Declined: `402`, `card_declined` (the failed payment comes with it) |
 | `4000000000009995` | Not enough money: `402`, `insufficient_funds` |
-| `4000000000007777` | Slow: `201`, `processing`; `authorized` about 10 seconds later (`SLOW_CARD_DELAY`), seen with `GET` |
+| `4000000000007777` | Slow: `201`, `processing`; `authorized` about 10 seconds later (`SLOW_CARD_DELAY`), announced by a `payment.authorized` webhook (or seen with `GET`) |
 | `4000000000003333` | Hang: authorized at once, but the answer comes after 30 seconds |
 
 ```bash
@@ -341,6 +385,28 @@ All provider endpoints: `POST /v1/payments` (authorize), `GET /v1/payments?refer
 (find by your own reference), `GET /v1/payments/{id}`,
 `POST /v1/payments/{id}/capture`, `/void`, `/refund`, and `GET /v1/account` (whose
 key is this?). The contract is [`api/payprovider.yaml`](api/payprovider.yaml).
+
+### Webhooks
+
+The provider posts its webhooks to the API (`WEBHOOK_URL` and `WEBHOOK_SECRET` in
+`docker-compose.yml`). Place a slow-card order, then see what arrived and what the
+API did with it:
+
+```bash
+docker compose exec -T postgres psql -U quickbytes -d quickbytes \
+  -c "SELECT type, outcome, received_at FROM webhook_events ORDER BY received_at DESC LIMIT 5"
+docker compose logs payprovider | grep webhook
+```
+
+- **A forged one** is refused with `400 invalid_webhook`, and changes nothing:
+  `curl localhost:8080/webhooks/payprovider -H 'Content-Type: application/json' -H 'QB-Signature: t=1792927973,v1=00' -d '{"id": "evt_fake"}'`
+- **The API down:** place a slow-card order, `docker compose stop api` within
+  10 seconds, and watch the provider's log try again (1 s, 2 s, 4 s, 8 s…). After
+  `docker compose start api` the next try gets through and the order is `paid`.
+- **Twice:** `WEBHOOK_SEND_TWICE=true make up` posts every webhook twice. The API
+  answers both `200`, the second with outcome `repeat`, and the order moves once.
+- **Off:** `WEBHOOK_URL= make up` turns webhooks off; the reconcile loop still
+  settles every payment, only later. `make up` turns them back on.
 
 ### API documentation
 
@@ -436,6 +502,7 @@ considered, and what it costs.
 - [0006](docs/adr/0006-uuidv7-ids.md) UUIDv7 for every ID
 - [0007](docs/adr/0007-rate-limiting.md) Login rate limits: slow down, never lock
 - [0008](docs/adr/0008-payments-find-out-never-charge-again.md) Payments: a timeout is "unknown", found out later, never charged again
+- [0009](docs/adr/0009-payment-webhooks.md) Payment webhooks: signed, sent at least once, applied by a ratchet
 
 ## Roadmap
 

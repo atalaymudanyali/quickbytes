@@ -20,3 +20,4 @@ record replaces the old one, and the old one is marked *Superseded*.
 | [0006](0006-uuidv7-ids.md) | UUIDv7 for every ID | Accepted |
 | [0007](0007-rate-limiting.md) | Login rate limits: slow down, never lock | Accepted |
 | [0008](0008-payments-find-out-never-charge-again.md) | Payments: a timeout is "unknown", found out later, never charged again | Accepted |
+| [0009](0009-payment-webhooks.md) | Payment webhooks: signed, sent at least once, applied by a ratchet | Accepted |

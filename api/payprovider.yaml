@@ -40,6 +40,27 @@ info:
 
     **Money** is a whole number of kuruş: `32000` means 320,00 TL.
 
+    **Webhooks.** When one of your payments is decided or moves (authorized,
+    failed, captured, voided, refunded), the provider posts a `WebhookEvent`
+    (see Schemas) to your webhook URL, so you don't have to keep asking.
+    `processing` sends nothing: the webhook comes when it's decided.
+
+    - **Signed.** Every webhook carries
+      `QB-Signature: t=<unix seconds>,v1=<hex>`, where `v1` is the
+      HMAC-SHA256 of `<t>.<raw body>` with your webhook secret. Make the same
+      HMAC over the exact bytes you received, compare in constant time, and
+      refuse a `t` more than 5 minutes from your clock (a replay). There may
+      be several `v1` values while a secret is being replaced; one match is
+      enough. Unknown schemes are to be skipped.
+    - **Answer 2xx** once you've handled it. Anything else (or no answer within
+      5 seconds, or a redirect, which isn't followed) is tried again after
+      1 s, 2 s, 4 s... doubling up to an hour, with up to 20% random extra,
+      14 tries in all (about 2 hours); then the webhook is given up.
+    - **At least once, in no particular order.** The same event can arrive
+      more than once (same `id`), and a retried event can arrive after a newer
+      one: `data.payment.status` is the status *as of that event*. Remember the
+      `id`s you've handled, and never move a payment's status backwards.
+
 servers:
   - url: http://localhost:8090
     description: Local development (`make up`)
@@ -451,6 +472,32 @@ components:
         reference: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    WebhookEvent:
+      description: The body of a webhook (not an endpoint of this service; the provider posts it to you).
+      type: object
+      required: [id, type, created_at, data]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The event's ID, the same on every try. Use it to notice a webhook you've already handled.
+        type:
+          type: string
+          enum: [payment.authorized, payment.failed, payment.captured, payment.voided, payment.refunded]
+        created_at:
+          type: string
+          format: date-time
+          description: When it happened (not when this try was sent).
+        data:
+          type: object
+          required: [payment]
+          additionalProperties: false
+          properties:
+            payment:
+              description: The payment as this event left it. Its `status` matches `type`, even if the payment has moved on since.
+              allOf: [{ $ref: "#/components/schemas/Payment" }]
 
     Error:
       type: object

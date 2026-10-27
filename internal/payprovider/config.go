@@ -3,6 +3,7 @@ package payprovider
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -16,6 +17,16 @@ type Config struct {
 	// replaces the old one (a key rotation).
 	MerchantName string
 	MerchantKey  string
+	// WebhookURL is where the merchant's webhooks go; empty turns them off.
+	// WebhookSecret signs them (the merchant checks with the same one).
+	WebhookURL    string
+	WebhookSecret string
+	// WebhookSendEvery is how often queued webhooks are checked for being
+	// due; WebhookTimeout how long one try waits for the endpoint.
+	// WebhookSendTwice posts every webhook twice (a test switch).
+	WebhookSendEvery time.Duration
+	WebhookTimeout   time.Duration
+	WebhookSendTwice bool
 	// SlowCardDelay is how long a payment with the slow test card stays
 	// processing before it's authorized.
 	SlowCardDelay time.Duration
@@ -37,6 +48,8 @@ func LoadConfig() (Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MerchantName:    getenv("PAYPROVIDER_MERCHANT_NAME", "quickbytes"),
 		MerchantKey:     os.Getenv("PAYPROVIDER_MERCHANT_KEY"),
+		WebhookURL:      os.Getenv("WEBHOOK_URL"),
+		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
 		ShutdownTimeout: 10 * time.Second,
 	}
 	var err error
@@ -46,6 +59,17 @@ func LoadConfig() (Config, error) {
 	if cfg.SettleEvery, err = getDuration("SETTLE_EVERY", time.Second); err != nil {
 		return Config{}, err
 	}
+	if cfg.WebhookSendEvery, err = getDuration("WEBHOOK_SEND_EVERY", time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.WebhookTimeout, err = getDuration("WEBHOOK_TIMEOUT", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if v := os.Getenv("WEBHOOK_SEND_TWICE"); v != "" {
+		if cfg.WebhookSendTwice, err = strconv.ParseBool(v); err != nil {
+			return Config{}, fmt.Errorf("WEBHOOK_SEND_TWICE must be true or false, got %q", v)
+		}
+	}
 	if cfg.IdempotencyCleanupEvery, err = getDuration("IDEMPOTENCY_CLEANUP_EVERY", 10*time.Minute); err != nil {
 		return Config{}, err
 	}
@@ -54,6 +78,9 @@ func LoadConfig() (Config, error) {
 	}
 	if len(cfg.MerchantKey) < minKeyLength {
 		return Config{}, fmt.Errorf("PAYPROVIDER_MERCHANT_KEY is required and must be at least %d characters (generate one with: echo sk_test_$(openssl rand -hex 24))", minKeyLength)
+	}
+	if cfg.WebhookURL != "" && len(cfg.WebhookSecret) < minKeyLength {
+		return Config{}, fmt.Errorf("WEBHOOK_SECRET is required with WEBHOOK_URL and must be at least %d characters (generate one with: echo whsec_$(openssl rand -hex 24))", minKeyLength)
 	}
 	return cfg, nil
 }

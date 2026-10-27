@@ -31,6 +31,9 @@ type Config struct {
 	PayProviderURL     string
 	PayProviderKey     string
 	PayProviderTimeout time.Duration
+	// PayProviderWebhookSecret checks the signatures on the provider's
+	// webhooks (the provider signs with the same one).
+	PayProviderWebhookSecret string
 	// PaymentReconcileEvery is how often the reconcile loop looks for
 	// payments that need work (an unknown result, a slow card, a capture
 	// that didn't go through).
@@ -39,15 +42,16 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		RedisURL:        os.Getenv("REDIS_URL"),
-		JWTSecret:       []byte(os.Getenv("JWT_SECRET")),
-		AccessTokenTTL:  15 * time.Minute,
-		RefreshTokenTTL: 30 * 24 * time.Hour,
-		ShutdownTimeout: 10 * time.Second,
-		PayProviderURL:  getenv("PAYPROVIDER_URL", "http://localhost:8090"),
-		PayProviderKey:  os.Getenv("PAYPROVIDER_KEY"),
+		HTTPAddr:                 getenv("HTTP_ADDR", ":8080"),
+		DatabaseURL:              os.Getenv("DATABASE_URL"),
+		RedisURL:                 os.Getenv("REDIS_URL"),
+		JWTSecret:                []byte(os.Getenv("JWT_SECRET")),
+		AccessTokenTTL:           15 * time.Minute,
+		RefreshTokenTTL:          30 * 24 * time.Hour,
+		ShutdownTimeout:          10 * time.Second,
+		PayProviderURL:           getenv("PAYPROVIDER_URL", "http://localhost:8090"),
+		PayProviderKey:           os.Getenv("PAYPROVIDER_KEY"),
+		PayProviderWebhookSecret: os.Getenv("PAYPROVIDER_WEBHOOK_SECRET"),
 	}
 	var err error
 	// Both can be shortened to watch an order expire in a demo, e.g.
@@ -75,6 +79,9 @@ func Load() (Config, error) {
 	}
 	if cfg.PayProviderKey == "" {
 		return Config{}, fmt.Errorf("PAYPROVIDER_KEY is required: the API's merchant key at the payment provider (in development, the PAYPROVIDER_MERCHANT_KEY in docker-compose.yml)")
+	}
+	if len(cfg.PayProviderWebhookSecret) < 32 {
+		return Config{}, fmt.Errorf("PAYPROVIDER_WEBHOOK_SECRET is required and must be at least 32 characters: it checks the provider's webhooks (in development, the WEBHOOK_SECRET in docker-compose.yml)")
 	}
 	return cfg, nil
 }

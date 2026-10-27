@@ -14,17 +14,16 @@ const settleBatch = 100
 // (authorized: the slow card always ends approved), and returns how many it
 // finished. It plays the card's bank answering late.
 //
-// The merchant isn't told here: it sees the new status with
-// GET /v1/payments/{id}. The "authorized" row this adds to payment_events is
-// what webhooks (a later issue) will deliver as a payment.authorized
-// notification, so this is where that work plugs in.
+// The merchant hears about it through a payment.authorized webhook, queued
+// here with the event (or by asking with GET /v1/payments/{id}).
 //
-// It's one statement: pick the due payments, change them, and append their
-// events. SKIP LOCKED leaves out a payment some other transaction is changing
-// right now (a second provider copy settling it too), instead of waiting for
-// it; the other copy settles that one.
+// It's one statement: pick the due payments, change them, append their
+// events and queue their webhooks. SKIP LOCKED leaves out a payment some
+// other transaction is changing right now (a second provider copy settling
+// it too), instead of waiting for it; the other copy settles that one.
 func (p *Payments) SettleDue(ctx context.Context) (int, error) {
-	tag, err := p.pool.Exec(ctx, `
+	var n int
+	err := p.pool.QueryRow(ctx, `
 		WITH due AS (
 			SELECT id FROM payments
 			WHERE status = 'processing' AND settle_at <= now()
@@ -35,14 +34,19 @@ func (p *Payments) SettleDue(ctx context.Context) (int, error) {
 			UPDATE payments SET status = 'authorized', settle_at = NULL, updated_at = now()
 			FROM due WHERE payments.id = due.id
 			RETURNING payments.id
+		), ev AS (
+			INSERT INTO payment_events (payment_id, status)
+			SELECT id, 'authorized' FROM settled
+			RETURNING id, payment_id, status
+		), queued AS (
+			`+queueWebhooks+`
 		)
-		INSERT INTO payment_events (payment_id, status)
-		SELECT id, 'authorized' FROM settled`,
-		settleBatch)
+		SELECT count(*) FROM ev`,
+		settleBatch).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("settle processing payments: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return n, nil
 }
 
 // RunSettler finishes due processing payments every interval until ctx is

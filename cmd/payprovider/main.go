@@ -53,6 +53,21 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("merchant ready", "merchant_id", merchant.ID, "name", merchant.Name)
 
+	// The merchant's webhook endpoint, from the environment like its key.
+	endpoints := payprovider.NewEndpoints(pool)
+	if cfg.WebhookURL != "" {
+		ep, err := endpoints.Ensure(ctx, merchant.ID, cfg.WebhookURL, cfg.WebhookSecret)
+		if err != nil {
+			return err
+		}
+		logger.Info("webhooks on", "endpoint_id", ep.ID, "url", ep.URL)
+	} else {
+		if err := endpoints.Disable(ctx, merchant.ID); err != nil {
+			return err
+		}
+		logger.Info("webhooks off (no WEBHOOK_URL)")
+	}
+
 	payments := payprovider.NewPayments(pool, cfg.SlowCardDelay)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -61,9 +76,17 @@ func run(logger *slog.Logger) error {
 		// No WriteTimeout: the hang card's answer takes 30 seconds on purpose.
 	}
 
-	// Slow-card payments get their final answer when their time comes. Both
-	// loops stop with ctx, on shutdown.
+	// Slow-card payments get their final answer when their time comes. All
+	// the loops stop with ctx, on shutdown.
 	go payments.RunSettler(ctx, cfg.SettleEvery, logger)
+	// Queued webhooks are posted, and tried again later when they fail.
+	sender := payprovider.NewSender(pool, payprovider.SenderConfig{
+		Timeout: cfg.WebhookTimeout, SendTwice: cfg.WebhookSendTwice,
+	}, logger)
+	go sender.RunSender(ctx, cfg.WebhookSendEvery)
+	if cfg.WebhookSendTwice {
+		logger.Warn("WEBHOOK_SEND_TWICE is on: every webhook is posted twice")
+	}
 	// Idempotency keys older than 24 hours are deleted, as in the API.
 	go idempotency.NewStore(pool).RunCleanup(ctx, cfg.IdempotencyCleanupEvery, logger)
 

@@ -18,6 +18,12 @@ import (
 // mid-call, the loop finds the payment pending after this.
 const AuthorizeGrace = time.Minute
 
+// WebhookGrace is how long a processing payment (the slow card) is left to
+// the provider's webhook before the reconcile loop first asks about it. The
+// webhook is the fast path; the loop is the safety net for one that never
+// comes (webhooks turned off, or every try failed).
+const WebhookGrace = 30 * time.Second
+
 // Finish is work that must happen together with recording a payment's
 // answer: it runs last inside that transaction. Checkout stores its final
 // idempotent answer this way.
@@ -77,11 +83,15 @@ func (s *Store) Authorize(ctx context.Context, p Payment, cardNumber string, fin
 		if out, err = s.recordIn(ctx, tx, p, c, ViaRequest); err != nil {
 			return err
 		}
-		if out.Status == Unknown || out.Status == Processing {
-			// Something to find out: the reconcile loop starts asking soon,
-			// not after the grace meant for a payment still pending.
+		// Something to find out: the reconcile loop starts asking soon, not
+		// after the grace meant for a payment still pending. Unknown: at
+		// once, since it may mean the provider never heard of it, and then
+		// no webhook will ever come. Processing: once the webhook has had
+		// its chance.
+		firstCheck := map[Status]time.Duration{Unknown: backoffBase, Processing: WebhookGrace}
+		if wait, ok := firstCheck[out.Status]; ok {
 			if _, err := tx.Exec(ctx, `UPDATE payments SET next_check_at = now() + make_interval(secs => $2) WHERE id = $1`,
-				p.ID, backoffBase.Seconds()); err != nil {
+				p.ID, wait.Seconds()); err != nil {
 				return fmt.Errorf("schedule the first check: %w", err)
 			}
 		}
