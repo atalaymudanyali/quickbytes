@@ -120,8 +120,8 @@ services:
         condition: service_healthy
 
   # The location service: couriers report where they are, through a UDP door and
-  # (soon) a WebSocket door, and it keeps the latest position of each in Redis.
-  # The same port number, once for TCP (stats, health) and once for UDP.
+  # a WebSocket door, and it keeps the latest position of each in Redis.
+  # The same port number, once for TCP (WebSocket, stats, health) and once for UDP.
   locations:
     build:
       context: .

@@ -216,11 +216,11 @@ func TestStatsPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
-	var got map[string]DoorCounts
+	var got Stats
 	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got["udp"].Received != 1 || got["udp"].Malformed != 1 {
+	if got.UDP.Received != 1 || got.UDP.Malformed != 1 {
 		t.Errorf("stats = %+v", got)
 	}
 

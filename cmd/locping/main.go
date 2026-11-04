@@ -1,20 +1,25 @@
 // Command locping plays a courier's phone by hand: it sends location pings to the
 // location service, signed with the shift key from starting a shift. UDP never
-// answers, so see what happened at http://localhost:8095/stats.
+// answers, so see what happened at http://localhost:8095/stats. A WebSocket says why
+// if the service hangs up.
 //
 //	curl -s -X POST localhost:8080/driver/shift/start -H "Authorization: Bearer $TOKEN" > shift.json
 //	go run ./cmd/locping -shift shift.json -lat 41.0370 -lng 28.9850
+//	go run ./cmd/locping -shift shift.json -door ws -every 5s
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
 	"github.com/atalaymudanyali/quickbytes/internal/locations"
@@ -43,6 +48,7 @@ func main() {
 		counter = flag.Uint64("counter", 0, "counter to send, to imitate a late packet (default: the clock in milliseconds)")
 		every   = flag.Duration("every", 0, "keep sending at this interval, like a real heartbeat: -every 5s (default: send once)")
 		forge   = flag.Bool("forge", false, "sign with the wrong key, like an attacker would")
+		door    = flag.String("door", "udp", "which door to send through: udp or ws")
 	)
 	flag.Parse()
 	if *shiftPath == "" {
@@ -66,11 +72,25 @@ func main() {
 		key = []byte("not the real key")
 	}
 
-	conn, err := net.Dial("udp", *addr)
-	if err != nil {
-		log.Fatal(err)
+	var send func(packet []byte) error
+	switch *door {
+	case "udp":
+		conn, err := net.Dial("udp", *addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer conn.Close()
+		send = func(packet []byte) error {
+			_, err := conn.Write(packet)
+			return err
+		}
+	case "ws":
+		var closeConn func()
+		send, closeConn = openWebSocket(*addr)
+		defer closeConn()
+	default:
+		log.Fatalf("-door must be udp or ws, got %q", *door)
 	}
-	defer conn.Close()
 
 	for {
 		c := *counter
@@ -84,7 +104,7 @@ func main() {
 			Lat:          *lat,
 			Lng:          *lng,
 		}, key)
-		if _, err := conn.Write(packet); err != nil {
+		if err := send(packet); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Printf("sent %d bytes: driver %s at %.7f,%.7f, counter %d\n", len(packet), shift.Driver.ID, *lat, *lng, c)
@@ -94,4 +114,32 @@ func main() {
 		}
 		time.Sleep(*every)
 	}
+}
+
+// openWebSocket opens the call, and prints the reason if the service hangs up. The
+// function it returns gives the service a moment to object, then says goodbye.
+func openWebSocket(addr string) (send func([]byte) error, closeConn func()) {
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, "ws://"+addr+"/ws", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var closing atomic.Bool
+	go func() {
+		_, _, err := conn.Read(ctx) // the service never sends anything else
+		if closing.Load() {
+			return // that was us
+		}
+		fmt.Printf("the service hung up: %v\n", err)
+		os.Exit(1)
+	}()
+	send = func(packet []byte) error {
+		return conn.Write(ctx, websocket.MessageBinary, packet)
+	}
+	closeConn = func() {
+		time.Sleep(200 * time.Millisecond)
+		closing.Store(true)
+		_ = conn.CloseNow()
+	}
+	return send, closeConn
 }

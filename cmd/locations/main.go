@@ -68,6 +68,9 @@ func run(logger *slog.Logger) error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           service.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
+		// Open WebSocket calls end with ctx. Shutdown below doesn't wait for them:
+		// once a call has become a WebSocket, the HTTP server lets go of it.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	errCh := make(chan error, 1)
 	go func() {

@@ -8,7 +8,8 @@ import (
 
 // Config is the location service's settings, from environment variables.
 type Config struct {
-	// HTTPAddr serves the stats and health pages. UDPAddr is the UDP door.
+	// HTTPAddr serves the WebSocket door and the stats and health pages. UDPAddr
+	// is the UDP door.
 	HTTPAddr string
 	UDPAddr  string
 	// RedisURL is where the live map is.

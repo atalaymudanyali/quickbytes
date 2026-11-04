@@ -52,14 +52,31 @@ func (d *DoorStats) Counts() DoorCounts {
 	}
 }
 
+// Stats is what GET /stats answers.
+type Stats struct {
+	UDP       DoorCounts `json:"udp"`
+	WebSocket DoorCounts `json:"websocket"`
+	// Connections is how many WebSocket calls are open now, and SilentHangups how
+	// many ended because nothing arrived for too long. UDP has neither, because
+	// it has no calls.
+	Connections   int64  `json:"websocket_connections"`
+	SilentHangups uint64 `json:"websocket_silent_hangups"`
+}
+
 // Service is the back room behind both doors: every packet takes the same path
 // from here, whichever way it arrived.
 type Service struct {
 	secret string
 	store  *Store
 	logger *slog.Logger
+	// wsSilentAfter is how long a WebSocket call can go quiet before the service
+	// hangs up.
+	wsSilentAfter time.Duration
 
-	UDP DoorStats
+	UDP           DoorStats
+	WebSocket     DoorStats
+	Connections   atomic.Int64
+	SilentHangups atomic.Uint64
 
 	lastRedisLog atomic.Int64
 }
@@ -67,7 +84,7 @@ type Service struct {
 // NewService returns a service that checks packets with secret and saves good ones
 // to store.
 func NewService(secret string, store *Store, logger *slog.Logger) *Service {
-	return &Service{secret: secret, store: store, logger: logger}
+	return &Service{secret: secret, store: store, logger: logger, wsSilentAfter: SilentAfter}
 }
 
 // Handle takes one packet from a door. It returns an error only when the packet
@@ -115,16 +132,22 @@ func (s *Service) logRedisError(now time.Time, err error) {
 	}
 }
 
-// Routes serves the service's own pages. There's no door here yet for pings.
+// Routes serves the WebSocket door and the service's own pages.
 func (s *Service) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ws", s.handleWebSocket)
 	// Up as long as the process is: being up without Redis is on purpose, and the
 	// redis_errors count shows it.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]DoorCounts{"udp": s.UDP.Counts()})
+		writeJSON(w, Stats{
+			UDP:           s.UDP.Counts(),
+			WebSocket:     s.WebSocket.Counts(),
+			Connections:   s.Connections.Load(),
+			SilentHangups: s.SilentHangups.Load(),
+		})
 	})
 	return mux
 }
