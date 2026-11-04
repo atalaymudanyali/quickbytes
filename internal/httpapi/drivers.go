@@ -112,7 +112,21 @@ func (s *Server) handleEndShift(w http.ResponseWriter, r *http.Request) {
 		s.writeInternalError(w, r, err)
 		return
 	}
+	s.leaveMap(r, d.ID)
 	writeJSON(w, http.StatusOK, d)
+}
+
+// leaveMap takes a driver off the live map. The shift has already ended by now,
+// because Postgres is what decides who is free. So if Redis is down the driver isn't
+// kept working for it: they're only left on the map, where they count as silent
+// after 30 seconds and Redis's next restart wipes them anyway.
+func (s *Server) leaveMap(r *http.Request, driverID uuid.UUID) {
+	if s.positions == nil {
+		return
+	}
+	if err := s.positions.Remove(r.Context(), driverID); err != nil {
+		s.logger.WarnContext(r.Context(), "driver left on the live map after ending their shift", "driver_id", driverID, "err", err)
+	}
 }
 
 func writeDriverDetailsMissing(w http.ResponseWriter, r *http.Request) {

@@ -271,10 +271,10 @@ func TestPublicMenuIsCached(t *testing.T) {
 func TestPublicMenuETag(t *testing.T) {
 	cases := []struct {
 		name  string
-		redis func(t *testing.T) *redis.Client
+		redis func(t testing.TB) *redis.Client
 	}{
 		{"with redis", testutil.Redis}, // skipped when TEST_REDIS_URL isn't set
-		{"without redis", func(*testing.T) *redis.Client { return nil }},
+		{"without redis", func(testing.TB) *redis.Client { return nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

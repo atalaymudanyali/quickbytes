@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/drivers"
+	"github.com/atalaymudanyali/quickbytes/internal/locations"
 	"github.com/atalaymudanyali/quickbytes/internal/shiftkey"
 	"github.com/atalaymudanyali/quickbytes/internal/testutil"
 )
@@ -153,6 +157,122 @@ func TestStartAndEndShift(t *testing.T) {
 		if d.Status != drivers.StatusOffline {
 			t.Fatalf("status = %q, want offline", d.Status)
 		}
+	}
+}
+
+// onLiveMap reports whether a driver comes back from the helper dispatch will use. A
+// driver stays there for 30 seconds of silence, so if one is gone at once, something
+// took them off.
+func onLiveMap(t *testing.T, store *locations.Store, id uuid.UUID) bool {
+	t.Helper()
+	found, err := store.Near(context.Background(), 41.0370, 28.9850, 1000, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range found {
+		if f.DriverID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func putOnLiveMap(t *testing.T, store *locations.Store, id uuid.UUID) {
+	t.Helper()
+	ping := locations.Ping{DriverID: id, Counter: 1, Lat: 41.0370, Lng: 28.9850}
+	if _, err := store.Save(context.Background(), ping, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !onLiveMap(t, store, id) {
+		t.Fatal("the driver isn't on the map to begin with")
+	}
+}
+
+func TestEndShiftLeavesTheLiveMapAtOnce(t *testing.T) {
+	srv, h := newAuthTestServer(t)
+	store := locations.NewStore(testutil.Redis(t))
+	srv.positions = store
+
+	token := signUpAs(t, h, "driver")
+	id := saveDriver(t, h, token, "motorcycle").ID
+	startShift(t, h, token)
+	putOnLiveMap(t, store, id)
+
+	if rec := send(t, h, http.MethodPost, "/driver/shift/end", token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("end: %d %s", rec.Code, rec.Body)
+	}
+	if onLiveMap(t, store, id) {
+		t.Fatal("still on the map after ending the shift")
+	}
+}
+
+// Refused because they're carrying food: the customer still needs to see them.
+func TestEndShiftDuringADeliveryStaysOnTheLiveMap(t *testing.T) {
+	srv, h := newAuthTestServer(t)
+	store := locations.NewStore(testutil.Redis(t))
+	srv.positions = store
+
+	token := signUpAs(t, h, "driver")
+	id := saveDriver(t, h, token, "motorcycle").ID
+	if _, err := testutil.DB(t).Exec(context.Background(),
+		`UPDATE drivers SET status = 'on_delivery' WHERE profile_id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	putOnLiveMap(t, store, id)
+
+	if rec := send(t, h, http.MethodPost, "/driver/shift/end", token, ""); rec.Code != http.StatusConflict {
+		t.Fatalf("end: %d %s, want 409", rec.Code, rec.Body)
+	}
+	if !onLiveMap(t, store, id) {
+		t.Fatal("left the map during a delivery")
+	}
+}
+
+// Postgres decides who is free, so a shift ends even when the map can't hear about it.
+func TestEndShiftWorksWithRedisDown(t *testing.T) {
+	srv, h := newAuthTestServer(t)
+	down, err := cache.Open("redis://127.0.0.1:1/0") // port 1: nothing listens there
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer down.Close()
+	srv.positions = locations.NewStore(down)
+
+	token := signUpAs(t, h, "driver")
+	saveDriver(t, h, token, "motorcycle")
+	startShift(t, h, token)
+
+	rec := send(t, h, http.MethodPost, "/driver/shift/end", token, "")
+	var d drivers.Driver
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("end: %d %s", rec.Code, rec.Body)
+	}
+	if d.Status != drivers.StatusOffline {
+		t.Fatalf("status = %q, want offline", d.Status)
+	}
+}
+
+// The two services agree: a key from the API signs a packet the location service
+// accepts, for the driver the API said it was for.
+func TestShiftKeyWorksAtTheLocationService(t *testing.T) {
+	h := newAuthTestHandler(t)
+	token := signUpAs(t, h, "driver")
+	id := saveDriver(t, h, token, "motorcycle").ID
+	shift := startShift(t, h, token)
+
+	packet := locations.Seal(locations.Ping{
+		DriverID:     shift.Driver.ID,
+		KeyExpiresAt: shift.ShiftKey.ExpiresAt,
+		Counter:      1,
+		Lat:          41.0370,
+		Lng:          28.9850,
+	}, shift.ShiftKey.Key)
+	got, err := locations.Open(testShiftKeySecret, packet, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DriverID != id {
+		t.Fatalf("driver = %s, want %s", got.DriverID, id)
 	}
 }
 
