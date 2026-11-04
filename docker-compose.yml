@@ -19,7 +19,8 @@ services:
 
   redis:
     image: redis:8.0-alpine
-    # Used only as a cache, so:
+    # Holds only what can be rebuilt (the menu cache, and the live driver map,
+    # which the next heartbeats refill within 5 seconds), so:
     #   --save "" --appendonly no   keep nothing on disk; a restart starts empty
     #   --maxmemory 64mb            never grow beyond 64 MB
     #   allkeys-lru                 when full, drop the least recently used keys
@@ -118,6 +119,28 @@ services:
       postgres:
         condition: service_healthy
 
+  # The location service: couriers report where they are, through a UDP door and
+  # a WebSocket door, and it keeps the latest position of each in Redis.
+  # The same port number, once for TCP (WebSocket, stats, health) and once for UDP.
+  locations:
+    build:
+      context: .
+      args:
+        SERVICE: locations
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # Checks the signature on each ping: the same development-only secret as
+      # the API's SHIFT_KEY_SECRET above.
+      SHIFT_KEY_SECRET: dev-only-shift-key-secret-0123456789abcdef
+    ports:
+      - "127.0.0.1:8095:8095"
+      - "127.0.0.1:8095:8095/udp"
+    depends_on:
+      # Started first, but not required to be healthy: without Redis, pings are
+      # dropped and counted until it's back.
+      redis:
+        condition: service_started
+
   # The event stream (Kafka's protocol, one small container). The API publishes
   # order events to its "orders" topic; `make topics` creates that topic.
   redpanda:
@@ -161,6 +184,24 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
+
+  # Compares the location service's two doors, only started by `make bench-locations`.
+  # NET_ADMIN lets it make its own network bad on purpose, for its bad-network round.
+  locbench:
+    build:
+      context: .
+      dockerfile: scripts/locbench.Dockerfile
+    profiles: [tools]
+    cap_add: [NET_ADMIN]
+    environment:
+      LOCATIONS_ADDR: locations:8095
+      REDIS_URL: redis://redis:6379/0
+      # Makes a shift key per pretend courier, the way the API would: the same
+      # development-only secret as the API's and the location service's.
+      SHIFT_KEY_SECRET: dev-only-shift-key-secret-0123456789abcdef
+    depends_on:
+      locations:
+        condition: service_started
 
   # Load-testing tool, only started by `make load-menu` (the "tools" profile
   # keeps it out of `make up`).

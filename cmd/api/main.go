@@ -22,6 +22,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
+	"github.com/atalaymudanyali/quickbytes/internal/locations"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/outbox"
@@ -79,6 +80,11 @@ func run(logger *slog.Logger) error {
 	}
 
 	menuStore := menus.NewStore(pool)
+	// The API only ever takes drivers off the live map. Without Redis there's no map.
+	var positions *locations.Store
+	if redisClient != nil {
+		positions = locations.NewStore(redisClient)
+	}
 	menuCache := menus.NewCache(menuStore, redisClient, menus.DefaultTTL, logger)
 	restaurantStore := restaurants.NewStore(pool)
 	addressStore := addresses.NewStore(pool)
@@ -115,6 +121,7 @@ func run(logger *slog.Logger) error {
 			Drivers:        drivers.NewStore(pool),
 			ShiftKeySecret: cfg.ShiftKeySecret,
 			ShiftKeyTTL:    cfg.ShiftKeyTTL,
+			Positions:      positions,
 			Idempotency:    idempotencyStore,
 			WebhookSecret:  cfg.PayProviderWebhookSecret,
 			MenuCache:      menuCache,

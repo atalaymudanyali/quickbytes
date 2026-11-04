@@ -793,9 +793,10 @@ paths:
       operationId: endShift
       summary: Stop working
       description: |
-        The driver becomes `offline`. Calling it again is harmless. A shift key already
-        handed out keeps working until it expires, but an offline driver isn't offered
-        any orders.
+        The driver becomes `offline` and leaves the live map. Calling it again is
+        harmless. A shift key already handed out keeps working until it expires, so a
+        phone that keeps sending can put its dot back, but an offline driver isn't
+        offered any orders. A driver on a delivery stays on the map.
       security:
         - bearerAuth: []
       responses:

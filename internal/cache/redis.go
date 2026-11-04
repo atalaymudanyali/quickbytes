@@ -41,6 +41,17 @@ func UseLogger(l *slog.Logger) {
 	redis.SetLogger(slogPrinter{l})
 }
 
+// DiscardLogs turns the Redis library's own messages off. It's for a service that
+// reports Redis failures itself, at a pace it chooses: the library writes a line for
+// every failed attempt, which is one line per ping for the location service.
+func DiscardLogs() {
+	redis.SetLogger(discardPrinter{})
+}
+
+type discardPrinter struct{}
+
+func (discardPrinter) Printf(context.Context, string, ...any) {}
+
 type slogPrinter struct{ l *slog.Logger }
 
 func (p slogPrinter) Printf(ctx context.Context, format string, v ...any) {

@@ -24,7 +24,7 @@ side menu.
 Needs Docker and Go 1.27+.
 
 ```bash
-make up        # PostgreSQL, Redis, Redpanda, the API (:8080) and the mock payment provider (:8090), in Docker
+make up        # PostgreSQL, Redis, Redpanda, the API (:8080), the mock payment provider (:8090) and the location service (:8095), in Docker
 make seed      # Istanbul demo data, and six orders in different statuses
 ```
 
@@ -37,6 +37,7 @@ Then open **http://localhost:8080/docs**, log in with
 make events          # watch order events arrive on Redpanda, live
 make test            # every test, against real PostgreSQL and Redis
 make load-checkout   # retry checkouts hard, then count double charges at the provider
+make bench-locations # compare UDP and WebSocket at 10,000 pretend couriers (about 3 minutes)
 make down            # stop everything (the data is kept)
 ```
 
@@ -116,6 +117,12 @@ make down            # stop everything (the data is kept)
 - **Shift keys:** a signed, expiring credential handed out at shift start, for the
   location service. It's worked out from a server secret, the driver and the expiry,
   so checking a message needs no lookup.
+- **Live locations:** a separate service (`cmd/locations`) takes one heartbeat every
+  5 seconds from each courier, through a signed UDP door and a WebSocket door, and
+  keeps only the latest position in Redis (about 3.4 MB for 10,000 couriers). A counter
+  stops a late or recorded packet overwriting a newer position, a courier silent for
+  30 seconds is skipped, and with Redis down pings are dropped and counted while the
+  service stays up. The two doors are [measured against each other](#live-locations-udp-vs-websocket).
 
 ## Measured
 
@@ -279,6 +286,54 @@ so CI needs no Redpanda
 | Rows stamped even when publishing failed | `event … published 0 times, want 1` (lost) |
 | franz-go's default "never cancel a sent message" | `want an error when the broker never answered in time`: the relay's transaction stayed open as long as the broker was silent |
 | The move's event left out of the transaction path | `0 events, want 1` for every move |
+
+### Live locations: UDP vs WebSocket
+
+`make bench-locations` runs inside Docker's network, next to the service, with 10,000
+pretend couriers each sending one ping every 5 seconds: 2,000 a second, for 30 seconds
+per door. The bad network is `tc netem` on the sender: 5% of packets lost, 40 ms added,
+in that direction only. Bytes are every byte on the wire per ping, counted by the
+operating system, so they include headers, TCP's acknowledgements and its resends.
+Ages are how old a ping was when it was saved, as the upper limit of a counting group.
+
+| Door | Network | Lost | Bytes per ping | Age p50 | Age p99 | Oldest |
+|---|---|---|---|---|---|---|
+| UDP | good | 0 of 59,989 | **115** | ≤1 ms | ≤1 ms | ≤10 ms |
+| WebSocket | good | 0 of 59,990 | **211** | ≤1 ms | ≤1 ms | ≤10 ms |
+| UDP | 5% loss, 40 ms | **3,007 of 59,992 (5.01%)** | 109 | ≤40 ms | ≤50 ms | ≤50 ms |
+| WebSocket | 5% loss, 40 ms | **0 of 59,985** | 211 | ≤40 ms | **≤300 ms** | **≤2 s** |
+
+What keeping a courier connected costs:
+
+| Door | Bytes to connect | Service memory per courier | At 10,000 couriers |
+|---|---|---|---|
+| UDP | 0 | about 0 | about 0 |
+| WebSocket | 854 | **23.6 KB** | about 236 MB |
+
+Flat out, with 32 senders per door (a different question: where's the ceiling, and what
+happens at it?):
+
+| Door | Sent per second | Arrived per second | Lost |
+|---|---|---|---|
+| UDP | 2,576,391 | 62,297 | 97.6% |
+| WebSocket | 129,062 | 129,062 | 0% |
+
+**What the numbers say.** On a good network the doors differ only in cost: UDP sends
+45% fewer bytes and holds no memory per courier. On a bad one, UDP loses what the
+network loses, while TCP resends and delivers everything, a little late.
+
+**At a 5-second heartbeat that delay costs little.** TCP's well-known weakness, a lost
+piece holding up everything behind it, needs something behind it, and here the next
+ping is 5 seconds away. So a resend costs up to about 2 seconds, while a lost UDP ping
+leaves a position up to 10 seconds old. On freshness alone WebSocket does better here,
+so UDP's case at this rate is its cost, not its speed. That cost is what grows with
+couriers, and what the simulator's many pretend phones don't need to pay.
+
+**At the ceiling, TCP slows the sender down, and UDP's doesn't notice.** Both ceilings
+are far above the 2,000 pings a second needed, on a laptop that's also running the
+senders and Redis. UDP's is the lower one here, and part of the reason is that flood:
+pacing its senders to about 120,000 a second raised what arrived to about 92,000. The
+rest isn't pinned down, so it's a question for later, not a limit of UDP itself.
 
 ## Try it
 
@@ -519,6 +574,34 @@ curl -s -X POST localhost:8080/driver/shift/end -H "Authorization: Bearer $TOKEN
 docker compose exec -T postgres psql -U quickbytes -d quickbytes \
   -c "UPDATE drivers SET status = 'available' WHERE status = 'on_delivery'"
 curl -s -X POST localhost:8080/driver/shift/end -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Live locations
+
+`cmd/locping` plays a courier's phone. UDP never answers, so `/stats` is how to see
+what happened to each packet.
+
+```bash
+TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"kurye@demo.quickbytes.test","password":"quickbytes-demo"}' | jq -r .tokens.access_token)
+curl -s -X POST localhost:8080/driver/shift/start -H "Authorization: Bearer $TOKEN" > /tmp/shift.json
+
+# A ping through each door, then find the courier on the map.
+go run ./cmd/locping -shift /tmp/shift.json
+go run ./cmd/locping -shift /tmp/shift.json -door ws
+docker compose exec -T redis redis-cli GEOSEARCH drivers:geo FROMLONLAT 28.985 41.037 BYRADIUS 500 m WITHDIST
+
+# Try to move them to Kadıköy: a forged signature, then a late counter. They stay put.
+go run ./cmd/locping -shift /tmp/shift.json -forge -lat 40.99 -lng 29.03
+go run ./cmd/locping -shift /tmp/shift.json -counter 5 -lat 40.99 -lng 29.03
+curl -s localhost:8095/stats | jq '.udp | {accepted, stale, bad_signature}'
+
+# The WebSocket door can say what's wrong, because it's on a call with a real phone.
+go run ./cmd/locping -shift /tmp/shift.json -door ws -forge
+
+# Ending the shift takes them off the map at once.
+curl -s -X POST localhost:8080/driver/shift/end -H "Authorization: Bearer $TOKEN" | jq .status
+docker compose exec -T redis redis-cli GEOSEARCH drivers:geo FROMLONLAT 28.985 41.037 BYRADIUS 500 m
 ```
 
 ### API documentation

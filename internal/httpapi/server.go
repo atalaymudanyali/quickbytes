@@ -13,6 +13,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
+	"github.com/atalaymudanyali/quickbytes/internal/locations"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
 	"github.com/atalaymudanyali/quickbytes/internal/payments"
@@ -47,6 +48,9 @@ type Deps struct {
 	// ShiftKeyTTL.
 	ShiftKeySecret string
 	ShiftKeyTTL    time.Duration
+	// Positions is the live driver map, which a driver leaves when their shift
+	// ends. nil: running without Redis, so there's no map to leave.
+	Positions *locations.Store
 	// Idempotency stores the answers of retried requests (see idempotent).
 	Idempotency *idempotency.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
@@ -72,6 +76,7 @@ type Server struct {
 	orders      *orders.Store
 	payments    *payments.Store
 	drivers     *drivers.Store
+	positions   *locations.Store
 	idempotency *idempotency.Store
 	// shiftKeySecret and shiftKeyTTL make the keys handed out at shift start.
 	shiftKeySecret string
@@ -104,6 +109,7 @@ func NewServer(d Deps) *Server {
 		orders:         d.Orders,
 		payments:       d.Payments,
 		drivers:        d.Drivers,
+		positions:      d.Positions,
 		idempotency:    d.Idempotency,
 		shiftKeySecret: d.ShiftKeySecret,
 		shiftKeyTTL:    d.ShiftKeyTTL,
