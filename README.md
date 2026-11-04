@@ -107,6 +107,16 @@ make down            # stop everything (the data is kept)
 - **Measured, not claimed:** a k6 test of retried checkouts, and "broken on
   purpose" checks for every safety net ([below](#measured)).
 
+### Phase 3: drivers and dispatch (in progress)
+
+- **Drivers and shifts:** a vehicle and a status (`offline`, `available`,
+  `on_delivery`) in PostgreSQL, the truth about who is free. Starting a shift twice is
+  harmless, it can't make a driver on a delivery look free, and ending one during a
+  delivery answers `409`.
+- **Shift keys:** a signed, expiring credential handed out at shift start, for the
+  location service. It's worked out from a server secret, the driver and the expiry,
+  so checking a message needs no lookup.
+
 ## Measured
 
 Every number here was measured on one laptop (Apple Silicon, everything in Docker)
@@ -295,8 +305,8 @@ Every demo account's password is **`quickbytes-demo`**. They live on the reserve
 | Account | Profiles |
 |---|---|
 | `musteri@demo.quickbytes.test` | customer (addresses: Ev in Moda, İş in Mecidiyeköy) |
-| `kurye@demo.quickbytes.test` | customer, driver (Ev in Aksaray) |
-| `demo@demo.quickbytes.test` | customer, restaurant, driver (owns Kuzguncuk Fırını; Ev in Beşiktaş, Annem in Üsküdar) |
+| `kurye@demo.quickbytes.test` | customer, driver on a motorcycle (Ev in Aksaray) |
+| `demo@demo.quickbytes.test` | customer, restaurant, driver on a bicycle (owns Kuzguncuk Fırını; Ev in Beşiktaş, Annem in Üsküdar) |
 | `hasan@demo.quickbytes.test` | customer, restaurant (two branches of Hasan Usta Kebap) |
 | `elif@`, `murat@`, `zeynep@demo.quickbytes.test` | customer, restaurant |
 
@@ -490,6 +500,26 @@ make console    # or browse topics and messages at http://localhost:8088
   `docker compose start redpanda` they appear in `make events`, in order.
 - **Relay off:** `OUTBOX_RELAY=false make up` lets events pile up in the outbox;
   `make up` sends them.
+
+### A driver's shift
+
+```bash
+TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"kurye@demo.quickbytes.test","password":"quickbytes-demo"}' | jq -r .tokens.access_token)
+
+# Start working: status "available", and a shift key that lasts 12 hours.
+curl -s -X POST localhost:8080/driver/shift/start -H "Authorization: Bearer $TOKEN" | jq
+
+# Pretend an order was assigned: ending the shift now answers 409 on_delivery.
+docker compose exec -T postgres psql -U quickbytes -d quickbytes \
+  -c "UPDATE drivers SET status = 'on_delivery' WHERE status = 'available'"
+curl -s -X POST localhost:8080/driver/shift/end -H "Authorization: Bearer $TOKEN" | jq
+
+# Put it back, and end the shift.
+docker compose exec -T postgres psql -U quickbytes -d quickbytes \
+  -c "UPDATE drivers SET status = 'available' WHERE status = 'on_delivery'"
+curl -s -X POST localhost:8080/driver/shift/end -H "Authorization: Bearer $TOKEN" | jq
+```
 
 ### API documentation
 

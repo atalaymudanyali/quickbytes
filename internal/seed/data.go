@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -37,6 +38,8 @@ type Account struct {
 	FullName string `json:"full_name"`
 	// Every account gets a customer profile at sign-up. These are the others.
 	ExtraRoles []users.Role `json:"extra_roles"`
+	// What the account rides. Needed exactly when it has a driver profile.
+	Vehicle drivers.Vehicle `json:"vehicle,omitempty"`
 	// Delivery addresses saved on the customer profile, found by label when
 	// seeding again.
 	Addresses []Address `json:"addresses,omitempty"`
@@ -135,6 +138,7 @@ func (d Data) Validate() error {
 			bad("account %s: full name must be 1 to 100 characters", a.Email)
 		}
 		owners[a.Email] = false
+		isDriver := false
 		for _, r := range a.ExtraRoles {
 			if !r.Valid() || r == users.RoleCustomer {
 				bad("account %s: extra role %q must be restaurant or driver", a.Email, r)
@@ -142,6 +146,13 @@ func (d Data) Validate() error {
 			if r == users.RoleRestaurant {
 				owners[a.Email] = true
 			}
+			isDriver = isDriver || r == users.RoleDriver
+		}
+		if isDriver && !a.Vehicle.Valid() {
+			bad("account %s: a driver needs a vehicle: motorcycle, bicycle or car", a.Email)
+		}
+		if !isDriver && a.Vehicle != "" {
+			bad("account %s: has a vehicle but no driver profile", a.Email)
 		}
 		validateAddresses("account "+a.Email, a.Addresses, bad)
 	}

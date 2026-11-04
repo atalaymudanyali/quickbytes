@@ -50,6 +50,12 @@ type Config struct {
 	// OutboxCleanupEvery is how often published events older than 7 days
 	// are deleted from the outbox.
 	OutboxCleanupEvery time.Duration
+	// ShiftKeySecret makes the keys drivers sign their location messages with,
+	// each lasting ShiftKeyTTL. Whoever holds the secret can sign as any
+	// driver, so it's separate from the login secret and only the API and the
+	// location service have it.
+	ShiftKeySecret string
+	ShiftKeyTTL    time.Duration
 }
 
 func Load() (Config, error) {
@@ -64,6 +70,7 @@ func Load() (Config, error) {
 		PayProviderURL:           getenv("PAYPROVIDER_URL", "http://localhost:8090"),
 		PayProviderKey:           os.Getenv("PAYPROVIDER_KEY"),
 		PayProviderWebhookSecret: os.Getenv("PAYPROVIDER_WEBHOOK_SECRET"),
+		ShiftKeySecret:           os.Getenv("SHIFT_KEY_SECRET"),
 	}
 	var err error
 	// Both can be shortened to watch an order expire in a demo, e.g.
@@ -89,6 +96,10 @@ func Load() (Config, error) {
 	if cfg.OutboxCleanupEvery, err = getDuration("OUTBOX_CLEANUP_EVERY", time.Hour); err != nil {
 		return Config{}, err
 	}
+	// Longer than a normal shift. Can be shortened to watch a key expire in a demo.
+	if cfg.ShiftKeyTTL, err = getDuration("SHIFT_KEY_TTL", 12*time.Hour); err != nil {
+		return Config{}, err
+	}
 	if cfg.OutboxRelay, err = getBool("OUTBOX_RELAY"); err != nil {
 		return Config{}, err
 	}
@@ -111,6 +122,9 @@ func Load() (Config, error) {
 	}
 	if len(cfg.PayProviderWebhookSecret) < 32 {
 		return Config{}, fmt.Errorf("PAYPROVIDER_WEBHOOK_SECRET is required and must be at least 32 characters: it checks the provider's webhooks (in development, the WEBHOOK_SECRET in docker-compose.yml)")
+	}
+	if len(cfg.ShiftKeySecret) < 32 {
+		return Config{}, fmt.Errorf("SHIFT_KEY_SECRET is required and must be at least 32 characters (generate one with: openssl rand -base64 48)")
 	}
 	return cfg, nil
 }

@@ -4,10 +4,10 @@
       { "label": "Ev", "address_line": "Caferağa Mh., Moda Cd. No:61, Kadıköy", "details": "Kat 3, daire 7", "lat": 40.9850, "lng": 29.0285 },
       { "label": "İş", "address_line": "Mecidiyeköy Mh., Büyükdere Cd. No:65, Şişli", "details": "12. kat resepsiyon", "lat": 41.0670, "lng": 28.9930 }
     ]},
-    { "email": "kurye@demo.quickbytes.test", "full_name": "Mehmet Kaya", "extra_roles": ["driver"], "addresses": [
+    { "email": "kurye@demo.quickbytes.test", "full_name": "Mehmet Kaya", "extra_roles": ["driver"], "vehicle": "motorcycle", "addresses": [
       { "label": "Ev", "address_line": "Mimar Kemalettin Mh., Ordu Cd. No:150, Fatih", "details": "Kat 1", "lat": 41.0105, "lng": 28.9530 }
     ]},
-    { "email": "demo@demo.quickbytes.test", "full_name": "Deniz Demir", "extra_roles": ["restaurant", "driver"], "addresses": [
+    { "email": "demo@demo.quickbytes.test", "full_name": "Deniz Demir", "extra_roles": ["restaurant", "driver"], "vehicle": "bicycle", "addresses": [
       { "label": "Ev", "address_line": "Cihannüma Mh., Barbaros Blv. No:30, Beşiktaş", "details": "Kat 5, daire 10", "lat": 41.0455, "lng": 29.0080 },
       { "label": "Annem", "address_line": "Mimar Sinan Mh., Selmanağa Çeşmesi Sk. No:7, Üsküdar", "details": "Bahçe kapısı, zile basın", "lat": 41.0250, "lng": 29.0200 }
     ]},

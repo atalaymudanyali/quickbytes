@@ -11,6 +11,7 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/users"
@@ -23,6 +24,7 @@ type Seeder struct {
 	Restaurants *restaurants.Store
 	Menus       *menus.Store
 	Addresses   *addresses.Store
+	Drivers     *drivers.Store
 	Hasher      *auth.Hasher
 	// Password is given to every account the seeder creates.
 	Password string
@@ -30,7 +32,7 @@ type Seeder struct {
 
 // Counts says how many things of each kind a run created, or found already there.
 type Counts struct {
-	Accounts, Addresses, Restaurants, Categories, Items, OptionGroups, OptionChoices int
+	Accounts, Addresses, Drivers, Restaurants, Categories, Items, OptionGroups, OptionChoices int
 }
 
 type Report struct {
@@ -40,7 +42,7 @@ type Report struct {
 
 // Run creates whatever in d is missing and leaves the rest alone, so running it
 // again changes nothing and every ID stays the same. Things are found by their
-// natural key: accounts by email, addresses by label within their account, restaurants by owner and name, categories and
+// natural key: accounts by email, addresses by label within their account, drivers by profile, restaurants by owner and name, categories and
 // items by name within their restaurant, option groups by name within their item,
 // and choices by name within their group.
 func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
@@ -66,6 +68,11 @@ func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
 			if role == users.RoleRestaurant {
 				owners[a.Email] = p.ID
 			}
+			if role == users.RoleDriver {
+				if err := s.driver(ctx, p.ID, a.Vehicle, &rep); err != nil {
+					return rep, fmt.Errorf("account %s: %w", a.Email, err)
+				}
+			}
 		}
 		if err := s.addresses(ctx, u.ID, a.Addresses, &rep); err != nil {
 			return rep, fmt.Errorf("account %s: %w", a.Email, err)
@@ -84,6 +91,24 @@ func (s *Seeder) Run(ctx context.Context, d Data) (Report, error) {
 		rep.Restaurants = append(rep.Restaurants, got)
 	}
 	return rep, nil
+}
+
+// driver saves the details only if there are none, so seeding again can't change
+// the vehicle of a driver who edited theirs.
+func (s *Seeder) driver(ctx context.Context, profileID uuid.UUID, vehicle drivers.Vehicle, rep *Report) error {
+	_, err := s.Drivers.Get(ctx, profileID)
+	if err == nil {
+		rep.Existing.Drivers++
+		return nil
+	}
+	if !errors.Is(err, drivers.ErrNotFound) {
+		return err
+	}
+	if _, err := s.Drivers.Save(ctx, profileID, vehicle); err != nil {
+		return err
+	}
+	rep.Created.Drivers++
+	return nil
 }
 
 func (s *Seeder) account(ctx context.Context, a Account, rep *Report) (users.User, error) {
