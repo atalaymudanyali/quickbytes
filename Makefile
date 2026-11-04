@@ -12,7 +12,7 @@ SEED_PASSWORD ?= quickbytes-demo
 
 .PHONY: up down db topics events console run test lint fmt seed seed-reset bench-near-me load-menu load-checkout swagger-ui
 
-up: db topics ## Start everything (database, Redpanda, API, payment provider) in Docker
+up: db topics ## Start everything (database, Redpanda, API, payment provider, location service) in Docker
 	docker compose up --build -d
 
 down: ## Stop everything, the console too (data is kept in Docker volumes)
