@@ -8,6 +8,7 @@ import (
 
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/seed"
@@ -30,7 +31,8 @@ func TestRunTwice(t *testing.T) {
 	}
 	hasher := auth.NewHasher(auth.FastParams)
 	userStore, restaurantStore, menuStore := users.NewStore(pool), restaurants.NewStore(pool), menus.NewStore(pool)
-	s := &seed.Seeder{Users: userStore, Restaurants: restaurantStore, Menus: menuStore, Addresses: addresses.NewStore(pool), Hasher: hasher, Password: password}
+	driverStore := drivers.NewStore(pool)
+	s := &seed.Seeder{Users: userStore, Restaurants: restaurantStore, Menus: menuStore, Addresses: addresses.NewStore(pool), Drivers: driverStore, Hasher: hasher, Password: password}
 
 	first, err := s.Run(ctx, data)
 	if err != nil {
@@ -47,6 +49,9 @@ func TestRunTwice(t *testing.T) {
 	all := seed.Counts{Accounts: len(data.Accounts), Restaurants: len(data.Restaurants)}
 	for _, a := range data.Accounts {
 		all.Addresses += len(a.Addresses)
+		if a.Vehicle != "" {
+			all.Drivers++
+		}
 	}
 	for _, r := range data.Restaurants {
 		all.Categories += len(r.Categories)
@@ -68,6 +73,29 @@ func TestRunTwice(t *testing.T) {
 			t.Errorf("%s: ID changed between runs", first.Restaurants[i].Name)
 		}
 	}
+
+	t.Run("kurye@ is a working driver, and seeding again leaves their shift alone", func(t *testing.T) {
+		u, err := userStore.GetByEmail(ctx, "kurye@"+seed.EmailDomain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := userStore.ProfileByRole(ctx, u.ID, users.RoleDriver)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := driverStore.StartShift(ctx, p.ID)
+		if err != nil || d.Status != drivers.StatusAvailable || d.Vehicle != drivers.VehicleMotorcycle {
+			t.Fatalf("start shift = %+v, %v; want available on a motorcycle", d, err)
+		}
+		t.Cleanup(func() { _, _ = driverStore.EndShift(ctx, p.ID) })
+
+		if _, err := s.Run(ctx, data); err != nil {
+			t.Fatal(err)
+		}
+		if d, err := driverStore.Get(ctx, p.ID); err != nil || d.Status != drivers.StatusAvailable {
+			t.Fatalf("after seeding again: %+v, %v; want still available", d, err)
+		}
+	})
 
 	t.Run("demo accounts can log in", func(t *testing.T) {
 		u, err := userStore.GetByEmail(ctx, "demo@"+seed.EmailDomain)
@@ -126,7 +154,7 @@ func TestSeededOptions(t *testing.T) {
 	}
 	menuStore := menus.NewStore(pool)
 	s := &seed.Seeder{Users: users.NewStore(pool), Restaurants: restaurants.NewStore(pool), Menus: menuStore,
-		Addresses: addresses.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password}
+		Addresses: addresses.NewStore(pool), Drivers: drivers.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password}
 	rep, err := s.Run(ctx, data)
 	if err != nil {
 		t.Fatal(err)

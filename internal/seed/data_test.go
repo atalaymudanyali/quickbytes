@@ -108,6 +108,9 @@ func TestParse(t *testing.T) {
 		{"address label used twice", `{"label": "Ev", "address_line": "Moda Cd. 40", "lat": 40.984, "lng": 29.027}`,
 			`{"label": "Ev", "address_line": "Moda Cd. 40", "lat": 40.984, "lng": 29.027}, {"label": "Ev", "address_line": "Moda Cd. 41", "lat": 40.984, "lng": 29.027}`, "label used twice"},
 		{"customer as extra role", `"extra_roles": []`, `"extra_roles": ["customer"]`, "must be restaurant or driver"},
+		{"driver without a vehicle", `"extra_roles": []`, `"extra_roles": ["driver"]`, "needs a vehicle"},
+		{"driver with an unknown vehicle", `"extra_roles": []`, `"extra_roles": ["driver"], "vehicle": "skateboard"`, "needs a vehicle"},
+		{"vehicle without a driver profile", `"extra_roles": []`, `"extra_roles": [], "vehicle": "car"`, "no driver profile"},
 		{"empty category", `"items": [
       {"name": "Adana", "description": "", "price_kurus": 45000, "options": [
         {"name": "Boy", "min_picks": 1, "max_picks": 1, "choices": [{"name": "Küçük"}, {"name": "Büyük", "extra_price_kurus": 4000}]}

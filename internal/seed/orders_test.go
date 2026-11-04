@@ -13,6 +13,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
@@ -38,7 +39,7 @@ func TestPlaceOrders(t *testing.T) {
 	}
 	s := &seed.Seeder{
 		Users: users.NewStore(pool), Restaurants: restaurants.NewStore(pool), Menus: menus.NewStore(pool),
-		Addresses: addresses.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password,
+		Addresses: addresses.NewStore(pool), Drivers: drivers.NewStore(pool), Hasher: auth.NewHasher(auth.FastParams), Password: password,
 	}
 	if _, err := s.Run(ctx, data); err != nil {
 		t.Fatal(err)

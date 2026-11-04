@@ -19,6 +19,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/cache"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/restaurants"
 	"github.com/atalaymudanyali/quickbytes/internal/seed"
@@ -92,6 +93,7 @@ func run(ctx context.Context, out io.Writer, reset, withOrders bool) error {
 		Restaurants: restaurants.NewStore(pool),
 		Menus:       menuStore,
 		Addresses:   addresses.NewStore(pool),
+		Drivers:     drivers.NewStore(pool),
 		Hasher:      auth.NewHasher(auth.DefaultParams),
 		Password:    password,
 	}
@@ -141,6 +143,7 @@ func printReport(out io.Writer, d seed.Data, rep seed.Report) {
 	fmt.Fprintf(out, "               created  already there\n")
 	fmt.Fprintf(out, "  accounts     %7d  %13d\n", c.Accounts, e.Accounts)
 	fmt.Fprintf(out, "  addresses    %7d  %13d\n", c.Addresses, e.Addresses)
+	fmt.Fprintf(out, "  drivers      %7d  %13d\n", c.Drivers, e.Drivers)
 	fmt.Fprintf(out, "  restaurants  %7d  %13d\n", c.Restaurants, e.Restaurants)
 	fmt.Fprintf(out, "  categories   %7d  %13d\n", c.Categories, e.Categories)
 	fmt.Fprintf(out, "  items        %7d  %13d\n", c.Items, e.Items)
