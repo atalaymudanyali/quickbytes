@@ -39,6 +39,8 @@ tags:
     description: Finding and managing restaurants.
   - name: menus
     description: Reading and managing a restaurant's menu.
+  - name: drivers
+    description: A driver's details, and starting and ending a shift.
   - name: webhooks
     description: Called by the payment provider, not by apps.
 
@@ -700,6 +702,121 @@ paths:
         "403": { $ref: "#/components/responses/ProfileRequired" }
         "404": { $ref: "#/components/responses/OrderNotFound" }
         "409": { $ref: "#/components/responses/InvalidTransition" }
+
+  /driver:
+    get:
+      tags: [drivers]
+      operationId: getDriver
+      summary: The signed-in driver's details and status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The driver.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Driver" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "404":
+          description: This profile hasn't saved its driver details yet (code `driver_not_found`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      tags: [drivers]
+      operationId: saveDriver
+      summary: Create or change the driver's details
+      description: Changing the vehicle doesn't start or end a shift.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vehicle]
+              properties:
+                vehicle: { $ref: "#/components/schemas/Vehicle" }
+      responses:
+        "200":
+          description: The driver as saved.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Driver" }
+        "400": { $ref: "#/components/responses/InvalidJSON" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "413": { $ref: "#/components/responses/BodyTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /driver/shift/start:
+    post:
+      tags: [drivers]
+      operationId: startShift
+      summary: Start working, and get a shift key
+      description: |
+        An offline driver becomes `available`. Calling it again is harmless and gives
+        a fresh key, which is how a phone renews one during a long shift. A driver on
+        a delivery stays `on_delivery`, and still gets a key.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The driver and their shift key.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [driver, shift_key]
+                properties:
+                  driver: { $ref: "#/components/schemas/Driver" }
+                  shift_key: { $ref: "#/components/schemas/ShiftKey" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "409": { $ref: "#/components/responses/DriverDetailsMissing" }
+
+  /driver/shift/end:
+    post:
+      tags: [drivers]
+      operationId: endShift
+      summary: Stop working
+      description: |
+        The driver becomes `offline`. Calling it again is harmless. A shift key already
+        handed out keeps working until it expires, but an offline driver isn't offered
+        any orders.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The driver, now offline.
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Driver" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileRequired" }
+        "409":
+          description: |
+            The driver can't stop working yet: they're carrying an order (code
+            `on_delivery`), or haven't saved their details (code `driver_details_missing`).
+          headers:
+            X-Request-ID: { $ref: "#/components/headers/RequestID" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /webhooks/payprovider:
     post:
@@ -1690,6 +1807,13 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    DriverDetailsMissing:
+      description: This profile hasn't saved its driver details yet (code `driver_details_missing`).
+      headers:
+        X-Request-ID: { $ref: "#/components/headers/RequestID" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     InvalidTransition:
       description: The order's status doesn't allow this move, e.g. cancelling an order the restaurant already accepted (code `invalid_transition`).
       headers:
@@ -2114,6 +2238,44 @@ components:
           type: string
           format: date-time
           description: When the status last changed.
+
+    Vehicle:
+      type: string
+      enum: [motorcycle, bicycle, car]
+      example: motorcycle
+
+    Driver:
+      type: object
+      required: [id, vehicle, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The driver profile's ID.
+        vehicle: { $ref: "#/components/schemas/Vehicle" }
+        status:
+          type: string
+          enum: [offline, available, on_delivery]
+          description: |
+            `available` drivers can be offered orders; `on_delivery` drivers are carrying one.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ShiftKey:
+      type: object
+      description: |
+        What a driver's phone signs its location messages with. Only sent here, over
+        the API. Each message carries the signature and `expires_at`, never the key.
+      required: [key, expires_at]
+      properties:
+        key:
+          type: string
+          format: byte
+          description: The secret key, in base64.
+        expires_at:
+          type: string
+          format: date-time
+          description: In whole seconds. Start the shift again for a fresh key.
 
     DeliveryAddress:
       type: object

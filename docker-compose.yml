@@ -57,6 +57,11 @@ services:
       # Checks the provider's webhook signatures: the same development-only
       # secret as the provider's WEBHOOK_SECRET below.
       PAYPROVIDER_WEBHOOK_SECRET: whsec_dev_only_quickbytes_0123456789abcdef
+      # Makes the keys drivers sign their location messages with, and how long
+      # each lasts. Development-only secret. Shorten the time to watch a key
+      # expire: SHIFT_KEY_TTL=1m make up
+      SHIFT_KEY_SECRET: dev-only-shift-key-secret-0123456789abcdef
+      SHIFT_KEY_TTL: ${SHIFT_KEY_TTL-12h}
       # How often the reconcile loop settles payments that need work.
       PAYMENT_RECONCILE_EVERY: ${PAYMENT_RECONCILE_EVERY-5s}
       # Publish order events from the outbox to Redpanda. Turn the relay off to

@@ -11,6 +11,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/addresses"
 	"github.com/atalaymudanyali/quickbytes/internal/auth"
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
 	"github.com/atalaymudanyali/quickbytes/internal/orders"
@@ -41,6 +42,11 @@ type Deps struct {
 	Orders      *orders.Store
 	// Payments takes each order's payment through the payment provider.
 	Payments *payments.Store
+	Drivers  *drivers.Store
+	// ShiftKeySecret makes the keys handed out at shift start, each lasting
+	// ShiftKeyTTL.
+	ShiftKeySecret string
+	ShiftKeyTTL    time.Duration
 	// Idempotency stores the answers of retried requests (see idempotent).
 	Idempotency *idempotency.Store
 	// MenuCache serves public menus. It works without Redis too (it then reads
@@ -65,7 +71,11 @@ type Server struct {
 	carts       *carts.Store
 	orders      *orders.Store
 	payments    *payments.Store
+	drivers     *drivers.Store
 	idempotency *idempotency.Store
+	// shiftKeySecret and shiftKeyTTL make the keys handed out at shift start.
+	shiftKeySecret string
+	shiftKeyTTL    time.Duration
 	// webhookSecret checks the payment provider's webhook signatures.
 	webhookSecret string
 	menuCache     *menus.Cache
@@ -82,23 +92,26 @@ func NewServer(d Deps) *Server {
 		d.Limiter = ratelimit.New(nil, d.Logger)
 	}
 	return &Server{
-		db:            d.DB,
-		users:         d.Users,
-		hasher:        d.Hasher,
-		tokens:        d.Tokens,
-		refresh:       d.Refresh,
-		restaurants:   d.Restaurants,
-		menus:         d.Menus,
-		addresses:     d.Addresses,
-		carts:         d.Carts,
-		orders:        d.Orders,
-		payments:      d.Payments,
-		idempotency:   d.Idempotency,
-		webhookSecret: d.WebhookSecret,
-		menuCache:     d.MenuCache,
-		limiter:       d.Limiter,
-		limits:        defaultLimits,
-		logger:        d.Logger,
+		db:             d.DB,
+		users:          d.Users,
+		hasher:         d.Hasher,
+		tokens:         d.Tokens,
+		refresh:        d.Refresh,
+		restaurants:    d.Restaurants,
+		menus:          d.Menus,
+		addresses:      d.Addresses,
+		carts:          d.Carts,
+		orders:         d.Orders,
+		payments:       d.Payments,
+		drivers:        d.Drivers,
+		idempotency:    d.Idempotency,
+		shiftKeySecret: d.ShiftKeySecret,
+		shiftKeyTTL:    d.ShiftKeyTTL,
+		webhookSecret:  d.WebhookSecret,
+		menuCache:      d.MenuCache,
+		limiter:        d.Limiter,
+		limits:         defaultLimits,
+		logger:         d.Logger,
 	}
 }
 
@@ -122,6 +135,10 @@ func (s *Server) routes() []route {
 	// Addresses, the cart and orders belong to the customer profile.
 	customerOnly := func(h http.HandlerFunc) http.Handler {
 		return s.requireAuth(requireRole(users.RoleCustomer, h))
+	}
+	// A driver's details and shifts belong to the driver profile.
+	driverOnly := func(h http.HandlerFunc) http.Handler {
+		return s.requireAuth(requireRole(users.RoleDriver, h))
 	}
 
 	return []route{
@@ -160,6 +177,12 @@ func (s *Server) routes() []route {
 		{"POST /orders/{order_id}/accept", ownerOnly(s.handleAcceptOrder)},
 		{"POST /orders/{order_id}/reject", ownerOnly(s.handleRejectOrder)},
 		{"POST /orders/{order_id}/ready", ownerOnly(s.handleOrderReady)},
+
+		// A driver's details, and starting and ending a shift.
+		{"GET /driver", driverOnly(s.handleGetDriver)},
+		{"PUT /driver", driverOnly(s.handleSaveDriver)},
+		{"POST /driver/shift/start", driverOnly(s.handleStartShift)},
+		{"POST /driver/shift/end", driverOnly(s.handleEndShift)},
 
 		// The payment provider telling us about payments. No login: the
 		// webhook's signature proves who sent it.

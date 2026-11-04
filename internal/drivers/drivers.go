@@ -24,6 +24,11 @@ const (
 	VehicleCar        Vehicle = "car"
 )
 
+// Valid reports whether this is a vehicle the database accepts.
+func (v Vehicle) Valid() bool {
+	return v == VehicleMotorcycle || v == VehicleBicycle || v == VehicleCar
+}
+
 type Status string
 
 const (

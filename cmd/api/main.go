@@ -19,6 +19,7 @@ import (
 	"github.com/atalaymudanyali/quickbytes/internal/carts"
 	"github.com/atalaymudanyali/quickbytes/internal/config"
 	"github.com/atalaymudanyali/quickbytes/internal/database"
+	"github.com/atalaymudanyali/quickbytes/internal/drivers"
 	"github.com/atalaymudanyali/quickbytes/internal/httpapi"
 	"github.com/atalaymudanyali/quickbytes/internal/idempotency"
 	"github.com/atalaymudanyali/quickbytes/internal/menus"
@@ -100,22 +101,25 @@ func run(logger *slog.Logger) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewServer(httpapi.Deps{
-			DB:            pool,
-			Users:         users.NewStore(pool),
-			Hasher:        auth.NewHasher(auth.DefaultParams),
-			Tokens:        tokens,
-			Refresh:       auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
-			Restaurants:   restaurantStore,
-			Menus:         menuStore,
-			Addresses:     addressStore,
-			Carts:         cartStore,
-			Orders:        orderStore,
-			Payments:      paymentStore,
-			Idempotency:   idempotencyStore,
-			WebhookSecret: cfg.PayProviderWebhookSecret,
-			MenuCache:     menuCache,
-			Limiter:       ratelimit.New(redisClient, logger),
-			Logger:        logger,
+			DB:             pool,
+			Users:          users.NewStore(pool),
+			Hasher:         auth.NewHasher(auth.DefaultParams),
+			Tokens:         tokens,
+			Refresh:        auth.NewRefreshStore(pool, cfg.RefreshTokenTTL),
+			Restaurants:    restaurantStore,
+			Menus:          menuStore,
+			Addresses:      addressStore,
+			Carts:          cartStore,
+			Orders:         orderStore,
+			Payments:       paymentStore,
+			Drivers:        drivers.NewStore(pool),
+			ShiftKeySecret: cfg.ShiftKeySecret,
+			ShiftKeyTTL:    cfg.ShiftKeyTTL,
+			Idempotency:    idempotencyStore,
+			WebhookSecret:  cfg.PayProviderWebhookSecret,
+			MenuCache:      menuCache,
+			Limiter:        ratelimit.New(redisClient, logger),
+			Logger:         logger,
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
