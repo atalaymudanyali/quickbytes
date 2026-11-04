@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,26 @@ type DoorStats struct {
 	BadSignature atomic.Uint64
 	Expired      atomic.Uint64
 	RedisErrors  atomic.Uint64 // good pings dropped because Redis didn't answer
+
+	// arrivalAges counts accepted pings by how old they were on arrival, one
+	// counter per entry of ArrivalAgeBuckets and one more for anything older.
+	arrivalAges [len(ArrivalAgeBuckets) + 1]atomic.Uint64
+}
+
+// ArrivalAgeBuckets are the upper limits, in milliseconds, of the groups that
+// accepted pings are counted in, by how old they were on arrival. The age is the
+// server's clock minus the phone's, so it's only as good as those two agree: phones
+// can be off by seconds, while a benchmark on one machine has one clock.
+var ArrivalAgeBuckets = [...]int64{1, 2, 3, 5, 10, 20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 5000, 10000}
+
+func (d *DoorStats) observeAge(ms int64) {
+	for i, limit := range ArrivalAgeBuckets {
+		if ms <= limit {
+			d.arrivalAges[i].Add(1)
+			return
+		}
+	}
+	d.arrivalAges[len(ArrivalAgeBuckets)].Add(1)
 }
 
 // DoorCounts is one moment's reading of DoorStats.
@@ -37,10 +58,16 @@ type DoorCounts struct {
 	BadSignature uint64 `json:"bad_signature"`
 	Expired      uint64 `json:"expired"`
 	RedisErrors  uint64 `json:"redis_errors"`
+	// ArrivalAges lines up with Stats.ArrivalAgeBuckets, plus one for anything older.
+	ArrivalAges []uint64 `json:"arrival_ages"`
 }
 
 // Counts reads the counters.
 func (d *DoorStats) Counts() DoorCounts {
+	ages := make([]uint64, len(d.arrivalAges))
+	for i := range d.arrivalAges {
+		ages[i] = d.arrivalAges[i].Load()
+	}
 	return DoorCounts{
 		Received:     d.Received.Load(),
 		Accepted:     d.Accepted.Load(),
@@ -49,6 +76,7 @@ func (d *DoorStats) Counts() DoorCounts {
 		BadSignature: d.BadSignature.Load(),
 		Expired:      d.Expired.Load(),
 		RedisErrors:  d.RedisErrors.Load(),
+		ArrivalAges:  ages,
 	}
 }
 
@@ -61,6 +89,12 @@ type Stats struct {
 	// it has no calls.
 	Connections   int64  `json:"websocket_connections"`
 	SilentHangups uint64 `json:"websocket_silent_hangups"`
+	// ArrivalAgeBuckets are the upper limits, in milliseconds, of each door's
+	// arrival_ages.
+	ArrivalAgeBuckets []int64 `json:"arrival_age_buckets_ms"`
+	// MemoryBytes is what the service is holding right now, to see what open calls
+	// cost.
+	MemoryBytes uint64 `json:"memory_bytes"`
 }
 
 // Service is the back room behind both doors: every packet takes the same path
@@ -115,6 +149,7 @@ func (s *Service) Handle(ctx context.Context, door *DoorStats, packet []byte) er
 		s.logRedisError(now, err)
 	case saved:
 		door.Accepted.Add(1)
+		door.observeAge(now.UnixMilli() - int64(ping.Counter))
 	default:
 		door.Stale.Add(1)
 	}
@@ -142,11 +177,15 @@ func (s *Service) Routes() http.Handler {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, _ *http.Request) {
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
 		writeJSON(w, Stats{
-			UDP:           s.UDP.Counts(),
-			WebSocket:     s.WebSocket.Counts(),
-			Connections:   s.Connections.Load(),
-			SilentHangups: s.SilentHangups.Load(),
+			UDP:               s.UDP.Counts(),
+			WebSocket:         s.WebSocket.Counts(),
+			Connections:       s.Connections.Load(),
+			SilentHangups:     s.SilentHangups.Load(),
+			ArrivalAgeBuckets: ArrivalAgeBuckets[:],
+			MemoryBytes:       mem.HeapInuse + mem.StackInuse,
 		})
 	})
 	return mux

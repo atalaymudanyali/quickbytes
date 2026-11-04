@@ -10,7 +10,7 @@ DEV_REDIS_URL ?= redis://localhost:6379/0
 # local database, so these accounts never exist anywhere real.
 SEED_PASSWORD ?= quickbytes-demo
 
-.PHONY: up down db topics events console run test lint fmt seed seed-reset bench-near-me load-menu load-checkout swagger-ui
+.PHONY: up down db topics events console run test lint fmt seed seed-reset bench-near-me bench-locations load-menu load-checkout swagger-ui
 
 up: db topics ## Start everything (database, Redpanda, API, payment provider, location service) in Docker
 	docker compose up --build -d
@@ -63,6 +63,11 @@ seed-reset: db ## Delete only the demo data (accounts on @demo.quickbytes.test a
 
 bench-near-me: db ## Time the near-me query on 100k generated restaurants, without and with the index
 	docker compose exec -T postgres psql -q -U quickbytes -d quickbytes -f - < scripts/bench-near-me.sql
+
+bench-locations: ## Compare the location service's two doors at 10,000 pretend couriers, on a good and a bad network, then flat out (about 3 minutes)
+	docker compose up --build -d --wait locations
+	docker compose --profile tools run --rm --build locbench
+	@# It leaves the map empty, like a Redis restart would. The next heartbeats refill it.
 
 load-menu: ## Load-test the public menu (50 users, 30 s each): no cache, cache, then 304s via ETag
 	API_REDIS_URL= docker compose up --build -d --wait api

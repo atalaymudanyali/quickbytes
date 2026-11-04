@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +88,47 @@ func TestHandleCountsEachOutcome(t *testing.T) {
 	}
 	if len(found) != 1 {
 		t.Fatalf("only the good packet should count, and leave the driver at Taksim: got %+v", found)
+	}
+}
+
+func TestAcceptedPingsAreCountedByHowOldTheyArrive(t *testing.T) {
+	svc := NewService(testSecret, testStore(t), quiet)
+	ctx := context.Background()
+
+	now := uint64(time.Now().UnixMilli())
+	packets := [][]byte{
+		sealedNow(uuid.New(), now-250, taksimLat, taksimLng),    // the 300 ms group
+		sealedNow(uuid.New(), now-60_000, taksimLat, taksimLng), // older than every group
+		sealedNow(uuid.New(), now+60_000, taksimLat, taksimLng), // a phone clock running fast
+	}
+	for _, p := range packets {
+		if err := svc.Handle(ctx, &svc.UDP, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.Handle(ctx, &svc.UDP, []byte("hello")); err == nil {
+		t.Fatal("garbage was accepted")
+	}
+
+	ages := svc.UDP.Counts().ArrivalAges
+	if len(ages) != len(ArrivalAgeBuckets)+1 {
+		t.Fatalf("%d counters for %d groups", len(ages), len(ArrivalAgeBuckets))
+	}
+	var total uint64
+	for _, n := range ages {
+		total += n
+	}
+	if total != 3 {
+		t.Errorf("counted %d ages, want only the 3 accepted pings: %v", total, ages)
+	}
+	if ages[0] != 1 {
+		t.Errorf("first group = %d, want the fast clock in it: %v", ages[0], ages)
+	}
+	if ages[len(ages)-1] != 1 {
+		t.Errorf("last group = %d, want the old ping in it: %v", ages[len(ages)-1], ages)
+	}
+	if got := svc.UDP.Counts().ArrivalAges[slices.Index(ArrivalAgeBuckets[:], 300)]; got != 1 {
+		t.Errorf("300 ms group = %d, want 1: %v", got, ages)
 	}
 }
 

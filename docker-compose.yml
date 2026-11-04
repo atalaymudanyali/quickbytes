@@ -185,6 +185,24 @@ services:
       redpanda:
         condition: service_healthy
 
+  # Compares the location service's two doors, only started by `make bench-locations`.
+  # NET_ADMIN lets it make its own network bad on purpose, for its bad-network round.
+  locbench:
+    build:
+      context: .
+      dockerfile: scripts/locbench.Dockerfile
+    profiles: [tools]
+    cap_add: [NET_ADMIN]
+    environment:
+      LOCATIONS_ADDR: locations:8095
+      REDIS_URL: redis://redis:6379/0
+      # Makes a shift key per pretend courier, the way the API would: the same
+      # development-only secret as the API's and the location service's.
+      SHIFT_KEY_SECRET: dev-only-shift-key-secret-0123456789abcdef
+    depends_on:
+      locations:
+        condition: service_started
+
   # Load-testing tool, only started by `make load-menu` (the "tools" profile
   # keeps it out of `make up`).
   k6:
